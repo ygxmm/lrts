@@ -63,57 +63,69 @@ static IMP install_hook(Class cls, SEL sel, IMP newImp) {
         NSLOG(@"[hook] %@ -%@ NOT found", NSStringFromClass(cls), NSStringFromSelector(sel));
         return NULL;
     }
-    const char *enc = method_getTypeEncoding(m);
-    NSLOG(@"[hook] %@ -%@ enc=%s", NSStringFromClass(cls), NSStringFromSelector(sel), enc);
     IMP orig = method_getImplementation(m);
-    if (class_addMethod(cls, sel, newImp, enc)) return orig;
+    if (class_addMethod(cls, sel, newImp, method_getTypeEncoding(m))) return orig;
     return method_setImplementation(m, newImp);
 }
 
-/* ==================== 扫描函数（普通 C 函数，不再用 category） ==================== */
-static void scanTabBarInView(UIView *v, int depth) {
-    if (!v) return;
-    NSString *cls = NSStringFromClass(v.class);
-    if ([cls containsString:@"TabBarItemView"] ||
-        [cls containsString:@"TabBarItemImageView"] ||
-        [cls containsString:@"TabBarPlayerItemView"]) {
-        NSString *text = describeView(v);
-        NSLOG(@"[scan] %@ frame=%@ text=%@", cls, NSStringFromCGRect(v.frame), text);
-        if (textLooksLikeWelfare(text)) {
-            v.hidden = YES;
-            v.userInteractionEnabled = NO;
-            NSLOG(@"[scan] HIDDEN %@", text);
+/* ============ 关键：重排剩余可见 tab ============ */
+static void relayoutVisibleTabItems(UIView *tabBarView) {
+    if (!tabBarView) return;
+    NSMutableArray<UIView *> *visible = [NSMutableArray array];
+    for (UIView *sub in tabBarView.subviews) {
+        if ([NSStringFromClass(sub.class) containsString:@"TabBarItemView"] && !sub.hidden) {
+            [visible addObject:sub];
         }
     }
-    for (UIView *s in v.subviews) scanTabBarInView(s, depth + 1);
+    NSUInteger N = visible.count;
+    if (N == 0) return;
+    CGFloat viewW = tabBarView.bounds.size.width;
+    CGFloat itemW = 60;
+    CGFloat margin = 15;
+    CGFloat spacing = (N > 1) ? (viewW - 2 * margin - N * itemW) / (N - 1) : 0;
+    for (NSUInteger i = 0; i < N; i++) {
+        UIView *item = visible[i];
+        CGRect f = item.frame;
+        f.origin.x = margin + i * (itemW + spacing);
+        item.frame = f;
+    }
+    NSLOG(@"[relayout] N=%lu spacing=%.2f viewW=%.1f", (unsigned long)N, spacing, viewW);
 }
 
-/* ==================== Swift: TabBarItemView.layoutSubviews ==================== */
+/* ============ Swift: TabBarItemView.layoutSubviews ============ */
 static IMP orig_TBI_layout = NULL;
+static NSMutableSet<NSString *> *g_hiddenTabTexts = nil;
 static void hook_TBI_layout(id self, SEL _cmd) {
     if (orig_TBI_layout) ((void(*)(id, SEL))orig_TBI_layout)(self, _cmd);
     UIView *v = (UIView *)self;
     NSString *text = describeView(v);
     if (text.length == 0) return;
-    NSLOG(@"[TBI] texts=%@ frame=%@ hidden=%d", text, NSStringFromCGRect(v.frame), v.hidden);
+
+    if (!g_hiddenTabTexts) g_hiddenTabTexts = [NSMutableSet set];
+
     if (textLooksLikeWelfare(text)) {
         if (!v.hidden) {
             v.hidden = YES;
             v.userInteractionEnabled = NO;
+            [g_hiddenTabTexts addObject:text];
             NSLOG(@"[TBI] HIDDEN %@", text);
+            UIView *parent = v.superview;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                relayoutVisibleTabItems(parent);
+            });
         }
+        return;
+    }
+    /* 如果父 view 重排过、且我们之前隐藏过福利，就重新重排一遍（防止 Swift 二次 layout 覆盖） */
+    if (g_hiddenTabTexts.count > 0) {
+        UIView *parent = v.superview;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            relayoutVisibleTabItems(parent);
+        });
     }
 }
 
-/* ==================== Swift: OnlineEarningController.initWithIsTabBarInset ==================== */
-static IMP orig_OEC_init = NULL;
-static id hook_OEC_init(id self, SEL _cmd, BOOL arg0) {
-    NSLOG(@"[OEC] init insets=%d", arg0);
-    if (orig_OEC_init) return ((id(*)(id, SEL, BOOL))orig_OEC_init)(self, _cmd, arg0);
-    return nil;
-}
-
-/* ==================== Swift: AppMainController.viewDidLoad ==================== */
+/* ============ Swift: AppMainController.viewDidLoad ============ */
 static IMP orig_AMC_vdl = NULL;
 static void hook_AMC_vdl(id self, SEL _cmd) {
     if (orig_AMC_vdl) ((void(*)(id, SEL))orig_AMC_vdl)(self, _cmd);
@@ -123,7 +135,16 @@ static void hook_AMC_vdl(id self, SEL _cmd) {
         id strongSelf = weakSelf;
         if (!strongSelf) return;
         UIView *root = [(UIViewController *)strongSelf view];
-        scanTabBarInView(root, 0);
+        /* 找到 TabBarView 后主动重排一次 */
+        NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:root];
+        while (queue.count > 0) {
+            UIView *cur = queue.firstObject;
+            [queue removeObjectAtIndex:0];
+            if ([NSStringFromClass(cur.class) containsString:@"TabBarView"]) {
+                relayoutVisibleTabItems(cur);
+            }
+            [queue addObjectsFromArray:cur.subviews];
+        }
     });
 }
 
@@ -131,88 +152,39 @@ static BOOL g_installed = NO;
 static void InstallSwiftHooks(void) {
     if (g_installed) return;
     Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
-    Class oec = NSClassFromString(@"lazyaudio.OnlineEarningController");
     Class amc = NSClassFromString(@"lazyaudio.AppMainController");
-    if (!tbi || !oec || !amc) {
-        NSLOG(@"[hook] class missing tbi=%d oec=%d amc=%d", !!tbi, !!oec, !!amc);
-        return;
-    }
+    if (!tbi || !amc) { NSLOG(@"[hook] missing"); return; }
     orig_TBI_layout = install_hook(tbi, @selector(layoutSubviews), (IMP)hook_TBI_layout);
-    orig_OEC_init   = install_hook(oec, @selector(initWithIsTabBarInset:), (IMP)hook_OEC_init);
     orig_AMC_vdl    = install_hook(amc, @selector(viewDidLoad), (IMP)hook_AMC_vdl);
     g_installed = YES;
-    NSLOG(@"[hook] ALL installed");
+    NSLOG(@"[hook] installed");
 }
 
 %ctor {
     gLog = os_log_create("com.tzyhb.lazyaudio-nosplash", "tweak");
-    NSLOG(@"=== LazyAudioNoSplash loaded pid=%d ===", getpid());
+    NSLOG(@"=== loaded pid=%d ===", getpid());
     InstallSwiftHooks();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallSwiftHooks();
     });
 }
 
-/* ==================== OC 类：打 tab 数据源日志 ==================== */
-%hook LMPageTabBarControllerChildVM
-- (id)segmentName {
-    id r = %orig;
-    NSLOG(@"[ChildVM] segmentName=%@", r);
-    return r;
-}
-- (Class)viewControllerClass {
-    Class c = %orig;
-    if (c) NSLOG(@"[ChildVM] vcClass=%s", class_getName(c));
-    return c;
-}
-%end
-
-%hook LMPageTabBarControllerModel
-- (id)viewModels {
-    id r = %orig;
-    if ([r isKindOfClass:[NSArray class]]) {
-        NSArray *arr = (NSArray *)r;
-        NSMutableArray *names = [NSMutableArray array];
-        for (id item in arr) {
-            if ([item respondsToSelector:@selector(segmentName)]) {
-                id n = [item performSelector:@selector(segmentName)];
-                if (n) [names addObject:n];
-            }
-        }
-        NSLOG(@"[Model] viewModels count=%lu names=%@", (unsigned long)arr.count, [names componentsJoinedByString:@"|"]);
-    }
-    return r;
-}
-%end
-
-%hook LMPageTabBarController
-- (long long)numberOfItemsIn:(id)arg0 {
-    long long n = %orig;
-    NSLOG(@"[PTBC] numberOfItemsIn=%lld", n);
-    return n;
-}
-%end
-
-/* ==================== 开屏 hook（保留） ==================== */
+/* ============ 开屏 hook（保留） ============ */
 %hook TMEAdOperateSplash
 + (BOOL)needShowSplashWithLaunchType:(BOOL)arg0 { return NO; }
 - (BOOL)canPreLoadAMSSplash { return NO; }
 %end
-
 %hook TMEAdOperateIntervalManager
 - (BOOL)canShowSplash:(BOOL)arg0 { return NO; }
 %end
-
 %hook TMEAdOperateSplashManager
 - (BOOL)checkAdCanShow:(id)arg0 { return NO; }
 - (BOOL)hasP0AdSplashCanShow { return NO; }
 - (BOOL)hasP1AdSplashCanShow:(id)arg0 { return NO; }
 %end
-
 %hook LMLaunchAd
 + (BOOL)shouldShow:(id)arg0 { return NO; }
 %end
-
 %hook LMLaunchAdMaxShowCountBridge
 + (BOOL)shouldShow:(id)arg0 { return NO; }
 %end
