@@ -34,9 +34,20 @@ static IMP install_hook(Class cls, SEL sel, IMP newImp) {
     return method_setImplementation(m, newImp);
 }
 
-/* ============ 重排剩余可见 tab ============ */
-static void relayoutVisibleTabItems(UIView *tabBarView) {
+/* 隐藏福利 + 重排剩余可见 item（在 TabBarView.layoutSubviews 结束后调用） */
+static void hideWelfareAndRelayout(UIView *tabBarView) {
     if (!tabBarView) return;
+
+    for (UIView *sub in tabBarView.subviews) {
+        if ([NSStringFromClass(sub.class) containsString:@"TabBarItemView"]) {
+            NSString *text = describeView(sub);
+            if (textLooksLikeWelfare(text)) {
+                sub.hidden = YES;
+                sub.userInteractionEnabled = NO;
+            }
+        }
+    }
+
     NSMutableArray<UIView *> *visible = [NSMutableArray array];
     for (UIView *sub in tabBarView.subviews) {
         if ([NSStringFromClass(sub.class) containsString:@"TabBarItemView"] && !sub.hidden) {
@@ -57,64 +68,19 @@ static void relayoutVisibleTabItems(UIView *tabBarView) {
     }
 }
 
-/* ============ Swift: TabBarItemView.layoutSubviews ============ */
-static IMP orig_TBI_layout = NULL;
-static BOOL g_hasHidden = NO;
-static void hook_TBI_layout(id self, SEL _cmd) {
-    if (orig_TBI_layout) ((void(*)(id, SEL))orig_TBI_layout)(self, _cmd);
-    UIView *v = (UIView *)self;
-    NSString *text = describeView(v);
-    if (text.length == 0) return;
-
-    if (textLooksLikeWelfare(text)) {
-        if (!v.hidden) {
-            v.hidden = YES;
-            v.userInteractionEnabled = NO;
-            g_hasHidden = YES;
-            UIView *parent = v.superview;
-            dispatch_async(dispatch_get_main_queue(), ^{
-                relayoutVisibleTabItems(parent);
-            });
-        }
-        return;
-    }
-    if (g_hasHidden) {
-        UIView *parent = v.superview;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            relayoutVisibleTabItems(parent);
-        });
-    }
-}
-
-/* ============ Swift: AppMainController.viewDidLoad ============ */
-static IMP orig_AMC_vdl = NULL;
-static void hook_AMC_vdl(id self, SEL _cmd) {
-    if (orig_AMC_vdl) ((void(*)(id, SEL))orig_AMC_vdl)(self, _cmd);
-    __weak id weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        id strongSelf = weakSelf;
-        if (!strongSelf) return;
-        UIView *root = [(UIViewController *)strongSelf view];
-        NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:root];
-        while (queue.count > 0) {
-            UIView *cur = queue.firstObject;
-            [queue removeObjectAtIndex:0];
-            if ([NSStringFromClass(cur.class) containsString:@"TabBarView"]) {
-                relayoutVisibleTabItems(cur);
-            }
-            [queue addObjectsFromArray:cur.subviews];
-        }
-    });
+/* ============ 关键：hook TabBarView.layoutSubviews ============ */
+static IMP orig_TBV_layout = NULL;
+static void hook_TBV_layout(id self, SEL _cmd) {
+    if (orig_TBV_layout) ((void(*)(id, SEL))orig_TBV_layout)(self, _cmd);
+    hideWelfareAndRelayout((UIView *)self);
 }
 
 static BOOL g_installed = NO;
 static void InstallSwiftHooks(void) {
     if (g_installed) return;
-    Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
-    Class amc = NSClassFromString(@"lazyaudio.AppMainController");
-    if (!tbi || !amc) return;
-    orig_TBI_layout = install_hook(tbi, @selector(layoutSubviews), (IMP)hook_TBI_layout);
-    orig_AMC_vdl    = install_hook(amc, @selector(viewDidLoad), (IMP)hook_AMC_vdl);
+    Class tbv = NSClassFromString(@"lazyaudio.TabBarView");
+    if (!tbv) return;
+    orig_TBV_layout = install_hook(tbv, @selector(layoutSubviews), (IMP)hook_TBV_layout);
     g_installed = YES;
 }
 
@@ -125,7 +91,7 @@ static void InstallSwiftHooks(void) {
     });
 }
 
-/* ============ 开屏 hook ============ */
+/* ============ 开屏 hook（保留） ============ */
 %hook TMEAdOperateSplash
 + (BOOL)needShowSplashWithLaunchType:(BOOL)arg0 { return NO; }
 - (BOOL)canPreLoadAMSSplash { return NO; }
