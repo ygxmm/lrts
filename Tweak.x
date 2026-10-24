@@ -1,6 +1,36 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <os/log.h>
+
+static os_log_t gLog;
+
+static NSString *GetLogPath(void) {
+    static NSString *path = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSArray *dirs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+        NSString *dir = dirs.firstObject ?: NSTemporaryDirectory();
+        path = [dir stringByAppendingPathComponent:@"LazyAudioNoSplash.log"];
+    });
+    return path;
+}
+
+static void NSLOG(NSString *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_end(ap);
+    if (gLog) os_log(gLog, "%{public}@", s);
+    NSString *path = GetLogPath();
+    if (path) {
+        FILE *f = fopen(path.UTF8String, "a");
+        if (f) {
+            NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], s];
+            fputs(line.UTF8String, f);
+            fclose(f);
+        }
+    }
+}
 
 static void collectTexts(UIView *v, NSMutableSet<NSString *> *out) {
     if (!v) return;
@@ -34,64 +64,84 @@ static IMP install_hook(Class cls, SEL sel, IMP newImp) {
     return method_setImplementation(m, newImp);
 }
 
-/* 隐藏福利 + 重排剩余可见 item（在 TabBarView.layoutSubviews 结束后调用） */
-static void hideWelfareAndRelayout(UIView *tabBarView) {
-    if (!tabBarView) return;
-
-    for (UIView *sub in tabBarView.subviews) {
-        if ([NSStringFromClass(sub.class) containsString:@"TabBarItemView"]) {
-            NSString *text = describeView(sub);
-            if (textLooksLikeWelfare(text)) {
-                sub.hidden = YES;
-                sub.userInteractionEnabled = NO;
-            }
-        }
-    }
-
-    NSMutableArray<UIView *> *visible = [NSMutableArray array];
-    for (UIView *sub in tabBarView.subviews) {
-        if ([NSStringFromClass(sub.class) containsString:@"TabBarItemView"] && !sub.hidden) {
-            [visible addObject:sub];
-        }
-    }
-    NSUInteger N = visible.count;
-    if (N == 0) return;
-    CGFloat viewW = tabBarView.bounds.size.width;
-    CGFloat itemW = 60;
-    CGFloat margin = 15;
-    CGFloat spacing = (N > 1) ? (viewW - 2 * margin - N * itemW) / (N - 1) : 0;
-    for (NSUInteger i = 0; i < N; i++) {
-        UIView *item = visible[i];
-        CGRect f = item.frame;
-        f.origin.x = margin + i * (itemW + spacing);
-        item.frame = f;
-    }
+static BOOL isTabBarItem(UIView *v) {
+    return [NSStringFromClass(v.class) containsString:@"TabBarItemView"];
 }
 
-/* ============ 关键：hook TabBarView.layoutSubviews ============ */
-static IMP orig_TBV_layout = NULL;
-static void hook_TBV_layout(id self, SEL _cmd) {
-    if (orig_TBV_layout) ((void(*)(id, SEL))orig_TBV_layout)(self, _cmd);
-    hideWelfareAndRelayout((UIView *)self);
+/* ============ 关键：hook setFrame: ============ */
+static IMP orig_TBI_setFrame = NULL;
+static void hook_TBI_setFrame(id self, SEL _cmd, CGRect frame) {
+    UIView *v = (UIView *)self;
+    UIView *parent = v.superview;
+
+    if (!parent || ![NSStringFromClass(parent.class) containsString:@"TabBarView"]) {
+        if (orig_TBI_setFrame) ((void(*)(id, SEL, CGRect))orig_TBI_setFrame)(self, _cmd, frame);
+        return;
+    }
+
+    /* 1. 如果这是福利 item → 扔到屏幕外 */
+    if (textLooksLikeWelfare(describeView(v))) {
+        v.hidden = YES;
+        v.userInteractionEnabled = NO;
+        CGRect off = frame;
+        off.origin.x = -1000;
+        if (orig_TBI_setFrame) ((void(*)(id, SEL, CGRect))orig_TBI_setFrame)(self, _cmd, off);
+        return;
+    }
+
+    /* 2. 按 parent.subviews 里的原始顺序，找出当前可见项列表 */
+    NSMutableArray<UIView *> *allItems = [NSMutableArray array];
+    for (UIView *s in parent.subviews) {
+        if (isTabBarItem(s)) [allItems addObject:s];
+    }
+    NSMutableArray<UIView *> *visible = [NSMutableArray array];
+    for (UIView *s in allItems) {
+        if (!textLooksLikeWelfare(describeView(s))) [visible addObject:s];
+    }
+    NSUInteger N = visible.count;
+    NSUInteger idx = [visible indexOfObjectIdenticalTo:v];
+    if (idx == NSNotFound || N == 0) {
+        if (orig_TBI_setFrame) ((void(*)(id, SEL, CGRect))orig_TBI_setFrame)(self, _cmd, frame);
+        return;
+    }
+
+    /* 3. 计算新位置 */
+    CGFloat viewW = parent.bounds.size.width;
+    if (viewW <= 0) viewW = 393.0;
+    CGFloat itemW = frame.size.width;
+    if (itemW <= 0) itemW = 60.0;
+    CGFloat margin = 15.0;
+    CGFloat spacing = (N > 1) ? (viewW - 2 * margin - N * itemW) / (N - 1) : 0;
+    frame.origin.x = margin + idx * (itemW + spacing);
+
+    if (orig_TBI_setFrame) ((void(*)(id, SEL, CGRect))orig_TBI_setFrame)(self, _cmd, frame);
 }
 
 static BOOL g_installed = NO;
-static void InstallSwiftHooks(void) {
+static void InstallHooks(void) {
     if (g_installed) return;
-    Class tbv = NSClassFromString(@"lazyaudio.TabBarView");
-    if (!tbv) return;
-    orig_TBV_layout = install_hook(tbv, @selector(layoutSubviews), (IMP)hook_TBV_layout);
-    g_installed = YES;
+    Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
+    if (!tbi) return;
+    orig_TBI_setFrame = install_hook(tbi, @selector(setFrame:), (IMP)hook_TBI_setFrame);
+    if (orig_TBI_setFrame) {
+        g_installed = YES;
+        NSLOG(@"[hook] TBI.setFrame: installed");
+    }
 }
 
 %ctor {
-    InstallSwiftHooks();
+    gLog = os_log_create("com.tzyhb.lazyaudio-nosplash", "tweak");
+    NSLOG(@"=== loaded pid=%d ===", getpid());
+    InstallHooks();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        InstallSwiftHooks();
+        InstallHooks();
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        InstallHooks();
     });
 }
 
-/* ============ 开屏 hook（保留） ============ */
+/* ============ 开屏 hook ============ */
 %hook TMEAdOperateSplash
 + (BOOL)needShowSplashWithLaunchType:(BOOL)arg0 { return NO; }
 - (BOOL)canPreLoadAMSSplash { return NO; }
