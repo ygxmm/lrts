@@ -70,6 +70,24 @@ static IMP install_hook(Class cls, SEL sel, IMP newImp) {
     return method_setImplementation(m, newImp);
 }
 
+/* ==================== 扫描函数（普通 C 函数，不再用 category） ==================== */
+static void scanTabBarInView(UIView *v, int depth) {
+    if (!v) return;
+    NSString *cls = NSStringFromClass(v.class);
+    if ([cls containsString:@"TabBarItemView"] ||
+        [cls containsString:@"TabBarItemImageView"] ||
+        [cls containsString:@"TabBarPlayerItemView"]) {
+        NSString *text = describeView(v);
+        NSLOG(@"[scan] %@ frame=%@ text=%@", cls, NSStringFromCGRect(v.frame), text);
+        if (textLooksLikeWelfare(text)) {
+            v.hidden = YES;
+            v.userInteractionEnabled = NO;
+            NSLOG(@"[scan] HIDDEN %@", text);
+        }
+    }
+    for (UIView *s in v.subviews) scanTabBarInView(s, depth + 1);
+}
+
 /* ==================== Swift: TabBarItemView.layoutSubviews ==================== */
 static IMP orig_TBI_layout = NULL;
 static void hook_TBI_layout(id self, SEL _cmd) {
@@ -90,7 +108,7 @@ static void hook_TBI_layout(id self, SEL _cmd) {
 /* ==================== Swift: OnlineEarningController.initWithIsTabBarInset ==================== */
 static IMP orig_OEC_init = NULL;
 static id hook_OEC_init(id self, SEL _cmd, BOOL arg0) {
-    NSLOG(@"[OEC] init insets=%d callStack=\n%@", arg0, [NSThread callStackSymbols]);
+    NSLOG(@"[OEC] init insets=%d", arg0);
     if (orig_OEC_init) return ((id(*)(id, SEL, BOOL))orig_OEC_init)(self, _cmd, arg0);
     return nil;
 }
@@ -105,47 +123,25 @@ static void hook_AMC_vdl(id self, SEL _cmd) {
         id strongSelf = weakSelf;
         if (!strongSelf) return;
         UIView *root = [(UIViewController *)strongSelf view];
-        [self scanForTabBarInView:root depth:0];
+        scanTabBarInView(root, 0);
     });
 }
 
-static void scanForTabBarInViewHelper(UIView *v, int depth) {
-    if (!v) return;
-    NSString *cls = NSStringFromClass(v.class);
-    if ([cls containsString:@"TabBarItemView"] || [cls containsString:@"TabBarItemImageView"] || [cls containsString:@"TabBarPlayerItemView"]) {
-        NSString *text = describeView(v);
-        NSLOG(@"[scan] %@ frame=%@ text=%@", cls, NSStringFromCGRect(v.frame), text);
-    }
-    for (UIView *s in v.subviews) scanForTabBarInViewHelper(s, depth + 1);
-}
-
-@interface NSObject (ScanHelper)
-- (void)scanForTabBarInView:(UIView *)v depth:(int)depth;
-@end
-
-@implementation NSObject (ScanHelper)
-- (void)scanForTabBarInView:(UIView *)v depth:(int)depth {
-    scanForTabBarInViewHelper(v, depth);
-}
-@end
-
-/* ==================== 安装 Swift runtime hooks ==================== */
 static BOOL g_installed = NO;
 static void InstallSwiftHooks(void) {
     if (g_installed) return;
     Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
     Class oec = NSClassFromString(@"lazyaudio.OnlineEarningController");
     Class amc = NSClassFromString(@"lazyaudio.AppMainController");
-    BOOL allOk = tbi && oec && amc;
-    if (!allOk) {
-        NSLOG(@"[hook] Swift class missing: tbi=%d oec=%d amc=%d", !!tbi, !!oec, !!amc);
+    if (!tbi || !oec || !amc) {
+        NSLOG(@"[hook] class missing tbi=%d oec=%d amc=%d", !!tbi, !!oec, !!amc);
         return;
     }
     orig_TBI_layout = install_hook(tbi, @selector(layoutSubviews), (IMP)hook_TBI_layout);
     orig_OEC_init   = install_hook(oec, @selector(initWithIsTabBarInset:), (IMP)hook_OEC_init);
     orig_AMC_vdl    = install_hook(amc, @selector(viewDidLoad), (IMP)hook_AMC_vdl);
     g_installed = YES;
-    NSLOG(@"[hook] ALL installed. TBI=%p OEC=%p AMC=%p", orig_TBI_layout, orig_OEC_init, orig_AMC_vdl);
+    NSLOG(@"[hook] ALL installed");
 }
 
 %ctor {
@@ -157,7 +153,7 @@ static void InstallSwiftHooks(void) {
     });
 }
 
-/* ==================== OC 类：打 tab 数据源（先只打日志） ==================== */
+/* ==================== OC 类：打 tab 数据源日志 ==================== */
 %hook LMPageTabBarControllerChildVM
 - (id)segmentName {
     id r = %orig;
@@ -166,7 +162,7 @@ static void InstallSwiftHooks(void) {
 }
 - (Class)viewControllerClass {
     Class c = %orig;
-    if (c) NSLOG(@"[ChildVM] viewControllerClass=%s", class_getName(c));
+    if (c) NSLOG(@"[ChildVM] vcClass=%s", class_getName(c));
     return c;
 }
 %end
@@ -192,13 +188,8 @@ static void InstallSwiftHooks(void) {
 %hook LMPageTabBarController
 - (long long)numberOfItemsIn:(id)arg0 {
     long long n = %orig;
-    NSLOG(@"[PageTabBarController] numberOfItemsIn=%lld", n);
+    NSLOG(@"[PTBC] numberOfItemsIn=%lld", n);
     return n;
-}
-- (id)pageTabBar:(id)arg0 itemForCellAt:(long long)arg1 {
-    id r = %orig;
-    NSLOG(@"[PageTabBarController] itemForCellAt=%lld -> %@", arg1, NSStringFromClass([r class]));
-    return r;
 }
 %end
 
