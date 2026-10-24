@@ -33,43 +33,22 @@ static void NSLOG(NSString *fmt, ...) {
     }
 }
 
-static void DumpClassMethods(NSString *clsName) {
-    Class cls = NSClassFromString(clsName);
-    if (!cls) { NSLOG(@"[dump] %@ NOT FOUND", clsName); return; }
-    NSLOG(@"[dump] ===== %@ =====", clsName);
-    Class cur = cls;
-    int depth = 0;
-    while (cur && depth < 6) {
-        unsigned int count = 0;
-        Method *methods = class_copyMethodList(cur, &count);
-        if (methods) {
-            for (unsigned int i = 0; i < count; i++) {
-                NSLOG(@"[dump]   %s%s", class_isMetaClass(cur) ? "+" : "-", sel_getName(method_getName(methods[i])));
-            }
-            free(methods);
-        }
-        cur = class_getSuperclass(cur);
-        depth++;
+static UIView *FindViewByClassName(UIView *root, NSString *className) {
+    if (!root) return nil;
+    if ([NSStringFromClass(root.class) containsString:className]) return root;
+    for (UIView *sub in root.subviews) {
+        UIView *found = FindViewByClassName(sub, className);
+        if (found) return found;
     }
+    return nil;
 }
 
 %ctor {
     gLog = os_log_create("com.tzyhb.lazyaudio-nosplash", "tweak");
     NSLOG(@"=== LazyAudioNoSplash loaded pid=%d home=%@ ===", getpid(), NSHomeDirectory());
-    
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        NSLOG(@"[dump] ==== 开始 dump TabBar 相关类 ====");
-        DumpClassMethods(@"lazyaudio.LMTabBar");
-        DumpClassMethods(@"lazyaudio.TabBarView");
-        DumpClassMethods(@"lazyaudio.TabBarItemView");
-        DumpClassMethods(@"lazyaudio.TabBarItemImageView");
-        DumpClassMethods(@"lazyaudio.OnlineEarningController");
-        DumpClassMethods(@"lazyaudio.AppMainController");
-        NSLOG(@"[dump] ==== dump 结束 ====");
-    });
 }
 
-/* ===== 开屏 hook（保留成功的那一版） ===== */
+/* ---------- 开屏 hook（保留成功那版） ---------- */
 %hook TMEAdOperateSplash
 + (BOOL)needShowSplashWithLaunchType:(BOOL)arg0 { return NO; }
 - (BOOL)canPreLoadAMSSplash { return NO; }
@@ -91,4 +70,60 @@ static void DumpClassMethods(NSString *clsName) {
 
 %hook LMLaunchAdMaxShowCountBridge
 + (BOOL)shouldShow:(id)arg0 { return NO; }
+%end
+
+/* ---------- 福利 tab：探测 + 尝试隐藏 ---------- */
+%hook lazyaudio.TabBarItemView
+- (void)setAccessibilityLabel:(id)arg0 {
+    %orig;
+    if (arg0) {
+        NSLOG(@"[tab-item] setAccessibilityLabel: %@ frame=%@", arg0, NSStringFromCGRect(self.frame));
+    }
+}
+%end
+
+%hook lazyaudio.OnlineEarningController
+- (id)initWithIsTabBarInset:(BOOL)arg0 {
+    NSLOG(@"[OnlineEarning] initWithIsTabBarInset: %d", arg0);
+    return %orig;
+}
+%end
+
+%hook lazyaudio.AppMainController
+- (void)viewDidLoad {
+    %orig;
+    NSLOG(@"[AppMain] viewDidLoad");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        UIView *tabBarView = FindViewByClassName(self.view, @"TabBarView");
+        NSLOG(@"[AppMain] TabBarView = %@", tabBarView);
+        if (!tabBarView) return;
+        NSMutableArray *items = [NSMutableArray array];
+        for (UIView *sub in tabBarView.subviews) {
+            if ([NSStringFromClass(sub.class) containsString:@"TabBarItemView"]) {
+                [items addObject:sub];
+            }
+        }
+        NSLOG(@"[AppMain] found %lu TabBarItemView", (unsigned long)items.count);
+        for (UIView *sub in items) {
+            NSString *label = sub.accessibilityLabel;
+            NSString *value = sub.accessibilityValue;
+            NSLOG(@"[tab-item] label=%@ value=%@ frame=%@", label, value, NSStringFromCGRect(sub.frame));
+            BOOL isWelfare = NO;
+            if (label) {
+                if ([label containsString:@"福利"] ||
+                    [label containsString:@"赚钱"] ||
+                    [label containsString:@"免费"] ||
+                    [label containsString:@"金币"] ||
+                    [label containsString:@"权益"]) {
+                    isWelfare = YES;
+                }
+            }
+            if (isWelfare) {
+                NSLOG(@"[tab-item] 隐藏福利 tab: %@", label);
+                sub.hidden = YES;
+                sub.userInteractionEnabled = NO;
+            }
+        }
+    });
+}
 %end
