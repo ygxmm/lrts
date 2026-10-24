@@ -33,111 +33,176 @@ static void NSLOG(NSString *fmt, ...) {
     }
 }
 
-static UIView *FindViewByClassName(UIView *root, NSString *className) {
-    if (!root) return nil;
-    if ([NSStringFromClass(root.class) containsString:className]) return root;
-    for (UIView *sub in root.subviews) {
-        UIView *found = FindViewByClassName(sub, className);
-        if (found) return found;
+static void collectTexts(UIView *v, NSMutableSet<NSString *> *out) {
+    if (!v) return;
+    if ([v isKindOfClass:[UILabel class]]) {
+        UILabel *l = (UILabel *)v;
+        if (l.text.length) [out addObject:l.text];
     }
-    return nil;
+    for (UIView *s in v.subviews) collectTexts(s, out);
+}
+
+static NSString *describeView(UIView *v) {
+    NSMutableSet *texts = [NSMutableSet set];
+    collectTexts(v, texts);
+    return [texts.allObjects componentsJoinedByString:@"|"];
+}
+
+static BOOL textLooksLikeWelfare(NSString *text) {
+    if (text.length == 0) return NO;
+    return [text containsString:@"福利"] || [text containsString:@"赚钱"] ||
+           [text containsString:@"金币"] || [text containsString:@"免费"] ||
+           [text containsString:@"权益"] || [text containsString:@"红包"] ||
+           [text containsString:@"奖励"] || [text containsString:@"提现"];
 }
 
 static IMP install_hook(Class cls, SEL sel, IMP newImp) {
     if (!cls) return NULL;
     Method m = class_getInstanceMethod(cls, sel);
     if (!m) {
-        NSLOG(@"[hook] method %@ NOT found on %@", NSStringFromSelector(sel), NSStringFromClass(cls));
+        NSLOG(@"[hook] %@ -%@ NOT found", NSStringFromClass(cls), NSStringFromSelector(sel));
         return NULL;
     }
-    // 如果方法来自父类，先用 class_addMethod 覆盖到自己身上
-    if (class_addMethod(cls, sel, newImp, method_getTypeEncoding(m))) {
-        return method_getImplementation(m);
-    }
+    const char *enc = method_getTypeEncoding(m);
+    NSLOG(@"[hook] %@ -%@ enc=%s", NSStringFromClass(cls), NSStringFromSelector(sel), enc);
+    IMP orig = method_getImplementation(m);
+    if (class_addMethod(cls, sel, newImp, enc)) return orig;
     return method_setImplementation(m, newImp);
 }
 
-/* ===== Swift 类 runtime hook ===== */
-
-static IMP orig_TBI_setAccLabel_imp = NULL;
-static void hook_TBI_setAccLabel(id self, SEL _cmd, id arg0) {
-    if (orig_TBI_setAccLabel_imp) ((void(*)(id, SEL, id))orig_TBI_setAccLabel_imp)(self, _cmd, arg0);
-    if (arg0) NSLOG(@"[tab-item] setAccessibilityLabel: %@ frame=%@", arg0, NSStringFromCGRect([(UIView*)self frame]));
+/* ==================== Swift: TabBarItemView.layoutSubviews ==================== */
+static IMP orig_TBI_layout = NULL;
+static void hook_TBI_layout(id self, SEL _cmd) {
+    if (orig_TBI_layout) ((void(*)(id, SEL))orig_TBI_layout)(self, _cmd);
+    UIView *v = (UIView *)self;
+    NSString *text = describeView(v);
+    if (text.length == 0) return;
+    NSLOG(@"[TBI] texts=%@ frame=%@ hidden=%d", text, NSStringFromCGRect(v.frame), v.hidden);
+    if (textLooksLikeWelfare(text)) {
+        if (!v.hidden) {
+            v.hidden = YES;
+            v.userInteractionEnabled = NO;
+            NSLOG(@"[TBI] HIDDEN %@", text);
+        }
+    }
 }
 
-static IMP orig_OEC_init_imp = NULL;
+/* ==================== Swift: OnlineEarningController.initWithIsTabBarInset ==================== */
+static IMP orig_OEC_init = NULL;
 static id hook_OEC_init(id self, SEL _cmd, BOOL arg0) {
-    NSLOG(@"[OnlineEarning] initWithIsTabBarInset: %d", arg0);
-    if (orig_OEC_init_imp) return ((id(*)(id, SEL, BOOL))orig_OEC_init_imp)(self, _cmd, arg0);
+    NSLOG(@"[OEC] init insets=%d callStack=\n%@", arg0, [NSThread callStackSymbols]);
+    if (orig_OEC_init) return ((id(*)(id, SEL, BOOL))orig_OEC_init)(self, _cmd, arg0);
     return nil;
 }
 
-static IMP orig_AMC_viewDidLoad_imp = NULL;
-static void hook_AMC_viewDidLoad(id self, SEL _cmd) {
-    if (orig_AMC_viewDidLoad_imp) ((void(*)(id, SEL))orig_AMC_viewDidLoad_imp)(self, _cmd);
+/* ==================== Swift: AppMainController.viewDidLoad ==================== */
+static IMP orig_AMC_vdl = NULL;
+static void hook_AMC_vdl(id self, SEL _cmd) {
+    if (orig_AMC_vdl) ((void(*)(id, SEL))orig_AMC_vdl)(self, _cmd);
     NSLOG(@"[AppMain] viewDidLoad");
     __weak id weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         id strongSelf = weakSelf;
         if (!strongSelf) return;
-        UIView *v = [(UIViewController*)strongSelf view];
-        UIView *tabBarView = FindViewByClassName(v, @"TabBarView");
-        NSLOG(@"[AppMain] TabBarView = %@", tabBarView);
-        if (!tabBarView) return;
-        for (UIView *sub in tabBarView.subviews) {
-            if ([NSStringFromClass(sub.class) containsString:@"TabBarItemView"]) {
-                NSString *label = sub.accessibilityLabel;
-                NSLOG(@"[tab-item] label=%@ frame=%@", label, NSStringFromCGRect(sub.frame));
-                if (label && ([label containsString:@"福利"] || [label containsString:@"赚钱"] || [label containsString:@"免费"] || [label containsString:@"金币"] || [label containsString:@"权益"])) {
-                    NSLOG(@"[tab-item] 隐藏: %@", label);
-                    sub.hidden = YES;
-                }
-            }
-        }
+        UIView *root = [(UIViewController *)strongSelf view];
+        [self scanForTabBarInView:root depth:0];
     });
 }
 
-static BOOL g_TBI_installed = NO;
-static BOOL g_OEC_installed = NO;
-static BOOL g_AMC_installed = NO;
+static void scanForTabBarInViewHelper(UIView *v, int depth) {
+    if (!v) return;
+    NSString *cls = NSStringFromClass(v.class);
+    if ([cls containsString:@"TabBarItemView"] || [cls containsString:@"TabBarItemImageView"] || [cls containsString:@"TabBarPlayerItemView"]) {
+        NSString *text = describeView(v);
+        NSLOG(@"[scan] %@ frame=%@ text=%@", cls, NSStringFromCGRect(v.frame), text);
+    }
+    for (UIView *s in v.subviews) scanForTabBarInViewHelper(s, depth + 1);
+}
 
+@interface NSObject (ScanHelper)
+- (void)scanForTabBarInView:(UIView *)v depth:(int)depth;
+@end
+
+@implementation NSObject (ScanHelper)
+- (void)scanForTabBarInView:(UIView *)v depth:(int)depth {
+    scanForTabBarInViewHelper(v, depth);
+}
+@end
+
+/* ==================== 安装 Swift runtime hooks ==================== */
+static BOOL g_installed = NO;
 static void InstallSwiftHooks(void) {
-    if (!g_TBI_installed) {
-        Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
-        if (tbi) {
-            orig_TBI_setAccLabel_imp = install_hook(tbi, @selector(setAccessibilityLabel:), (IMP)hook_TBI_setAccLabel);
-            g_TBI_installed = YES;
-            NSLOG(@"[hook] TabBarItemView installed orig=%p", orig_TBI_setAccLabel_imp);
-        }
+    if (g_installed) return;
+    Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
+    Class oec = NSClassFromString(@"lazyaudio.OnlineEarningController");
+    Class amc = NSClassFromString(@"lazyaudio.AppMainController");
+    BOOL allOk = tbi && oec && amc;
+    if (!allOk) {
+        NSLOG(@"[hook] Swift class missing: tbi=%d oec=%d amc=%d", !!tbi, !!oec, !!amc);
+        return;
     }
-    if (!g_OEC_installed) {
-        Class oec = NSClassFromString(@"lazyaudio.OnlineEarningController");
-        if (oec) {
-            orig_OEC_init_imp = install_hook(oec, @selector(initWithIsTabBarInset:), (IMP)hook_OEC_init);
-            g_OEC_installed = YES;
-            NSLOG(@"[hook] OnlineEarningController installed orig=%p", orig_OEC_init_imp);
-        }
-    }
-    if (!g_AMC_installed) {
-        Class amc = NSClassFromString(@"lazyaudio.AppMainController");
-        if (amc) {
-            orig_AMC_viewDidLoad_imp = install_hook(amc, @selector(viewDidLoad), (IMP)hook_AMC_viewDidLoad);
-            g_AMC_installed = YES;
-            NSLOG(@"[hook] AppMainController installed orig=%p", orig_AMC_viewDidLoad_imp);
-        }
-    }
+    orig_TBI_layout = install_hook(tbi, @selector(layoutSubviews), (IMP)hook_TBI_layout);
+    orig_OEC_init   = install_hook(oec, @selector(initWithIsTabBarInset:), (IMP)hook_OEC_init);
+    orig_AMC_vdl    = install_hook(amc, @selector(viewDidLoad), (IMP)hook_AMC_vdl);
+    g_installed = YES;
+    NSLOG(@"[hook] ALL installed. TBI=%p OEC=%p AMC=%p", orig_TBI_layout, orig_OEC_init, orig_AMC_vdl);
 }
 
 %ctor {
     gLog = os_log_create("com.tzyhb.lazyaudio-nosplash", "tweak");
     NSLOG(@"=== LazyAudioNoSplash loaded pid=%d ===", getpid());
     InstallSwiftHooks();
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallSwiftHooks();
     });
 }
 
-/* ===== 开屏 hook（保留成功那版，都是纯 OC 类，不触发 Swift 警告） ===== */
+/* ==================== OC 类：打 tab 数据源（先只打日志） ==================== */
+%hook LMPageTabBarControllerChildVM
+- (id)segmentName {
+    id r = %orig;
+    NSLOG(@"[ChildVM] segmentName=%@", r);
+    return r;
+}
+- (Class)viewControllerClass {
+    Class c = %orig;
+    if (c) NSLOG(@"[ChildVM] viewControllerClass=%s", class_getName(c));
+    return c;
+}
+%end
+
+%hook LMPageTabBarControllerModel
+- (id)viewModels {
+    id r = %orig;
+    if ([r isKindOfClass:[NSArray class]]) {
+        NSArray *arr = (NSArray *)r;
+        NSMutableArray *names = [NSMutableArray array];
+        for (id item in arr) {
+            if ([item respondsToSelector:@selector(segmentName)]) {
+                id n = [item performSelector:@selector(segmentName)];
+                if (n) [names addObject:n];
+            }
+        }
+        NSLOG(@"[Model] viewModels count=%lu names=%@", (unsigned long)arr.count, [names componentsJoinedByString:@"|"]);
+    }
+    return r;
+}
+%end
+
+%hook LMPageTabBarController
+- (long long)numberOfItemsIn:(id)arg0 {
+    long long n = %orig;
+    NSLOG(@"[PageTabBarController] numberOfItemsIn=%lld", n);
+    return n;
+}
+- (id)pageTabBar:(id)arg0 itemForCellAt:(long long)arg1 {
+    id r = %orig;
+    NSLOG(@"[PageTabBarController] itemForCellAt=%lld -> %@", arg1, NSStringFromClass([r class]));
+    return r;
+}
+%end
+
+/* ==================== 开屏 hook（保留） ==================== */
 %hook TMEAdOperateSplash
 + (BOOL)needShowSplashWithLaunchType:(BOOL)arg0 { return NO; }
 - (BOOL)canPreLoadAMSSplash { return NO; }
