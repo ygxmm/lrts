@@ -33,82 +33,62 @@ static void NSLOG(NSString *fmt, ...) {
     }
 }
 
+static void DumpClassMethods(NSString *clsName) {
+    Class cls = NSClassFromString(clsName);
+    if (!cls) { NSLOG(@"[dump] %@ NOT FOUND", clsName); return; }
+    NSLOG(@"[dump] ===== %@ =====", clsName);
+    Class cur = cls;
+    int depth = 0;
+    while (cur && depth < 6) {
+        unsigned int count = 0;
+        Method *methods = class_copyMethodList(cur, &count);
+        if (methods) {
+            for (unsigned int i = 0; i < count; i++) {
+                NSLOG(@"[dump]   %s%s", class_isMetaClass(cur) ? "+" : "-", sel_getName(method_getName(methods[i])));
+            }
+            free(methods);
+        }
+        cur = class_getSuperclass(cur);
+        depth++;
+    }
+}
+
 %ctor {
     gLog = os_log_create("com.tzyhb.lazyaudio-nosplash", "tweak");
     NSLOG(@"=== LazyAudioNoSplash loaded pid=%d home=%@ ===", getpid(), NSHomeDirectory());
+    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        NSLOG(@"[dump] ==== 开始 dump TabBar 相关类 ====");
+        DumpClassMethods(@"lazyaudio.LMTabBar");
+        DumpClassMethods(@"lazyaudio.TabBarView");
+        DumpClassMethods(@"lazyaudio.TabBarItemView");
+        DumpClassMethods(@"lazyaudio.TabBarItemImageView");
+        DumpClassMethods(@"lazyaudio.OnlineEarningController");
+        DumpClassMethods(@"lazyaudio.AppMainController");
+        NSLOG(@"[dump] ==== dump 结束 ====");
+    });
 }
 
-/* ---------- 第一层：TMEAdOperateSplash 总开关/预加载 ---------- */
+/* ===== 开屏 hook（保留成功的那一版） ===== */
 %hook TMEAdOperateSplash
-
-+ (BOOL)needShowSplashWithLaunchType:(BOOL)arg0 {
-    NSLOG(@"[TMEAdOperateSplash +needShowSplashWithLaunchType:%d] -> NO", arg0);
-    return NO;
-}
-
-- (BOOL)canPreLoadAMSSplash {
-    NSLOG(@"[TMEAdOperateSplash canPreLoadAMSSplash] -> NO");
-    return NO;
-}
-
-/* 执行方法：只打日志，不改返回值 */
-- (void)loadAdAndShowSplashWithCustomUIModel:(id)arg0 {
-    NSLOG(@"[TMEAdOperateSplash loadAdAndShowSplashWithCustomUIModel:] (执行方法，不拦)");
-    %orig;
-}
-- (void)loadAdAndShowSplashWithCustomUIModel:(id)arg0 inContainerView:(id)arg1 {
-    NSLOG(@"[TMEAdOperateSplash loadAdAndShowSplashWithCustomUIModel:inContainerView:] (执行方法，不拦)");
-    %orig;
-}
-
++ (BOOL)needShowSplashWithLaunchType:(BOOL)arg0 { return NO; }
+- (BOOL)canPreLoadAMSSplash { return NO; }
 %end
 
-/* ---------- 第二层：TMEAdOperateIntervalManager 间隔控制 ---------- */
 %hook TMEAdOperateIntervalManager
-
-- (BOOL)canShowSplash:(BOOL)arg0 {
-    NSLOG(@"[TMEAdOperateIntervalManager canShowSplash:%d] -> NO", arg0);
-    return NO;
-}
-
+- (BOOL)canShowSplash:(BOOL)arg0 { return NO; }
 %end
 
-/* ---------- 第三层：TMEAdOperateSplashManager 管理器判断 ---------- */
 %hook TMEAdOperateSplashManager
-
-- (BOOL)checkAdCanShow:(id)arg0 {
-    NSLOG(@"[TMEAdOperateSplashManager checkAdCanShow:] arg=%@ -> NO", arg0);
-    return NO;
-}
-- (BOOL)hasP0AdSplashCanShow {
-    NSLOG(@"[TMEAdOperateSplashManager hasP0AdSplashCanShow] -> NO");
-    return NO;
-}
-- (BOOL)hasP1AdSplashCanShow:(id)arg0 {
-    NSLOG(@"[TMEAdOperateSplashManager hasP1AdSplashCanShow:] arg=%@ -> NO", arg0);
-    return NO;
-}
-
-/* 执行方法：只打日志，看最终是不是从这里真的展示 */
-- (BOOL)showSplashWithOrder:(id)arg0 withCustomUI:(id)arg1 inContainerView:(id)arg2 {
-    BOOL r = %orig;
-    NSLOG(@"[TMEAdOperateSplashManager showSplashWithOrder:...] result=%d (执行方法，不拦)", r);
-    return r;
-}
-
+- (BOOL)checkAdCanShow:(id)arg0 { return NO; }
+- (BOOL)hasP0AdSplashCanShow { return NO; }
+- (BOOL)hasP1AdSplashCanShow:(id)arg0 { return NO; }
 %end
 
-/* ---------- 第四层：本地 launchAd 数据模型（保留，无害） ---------- */
 %hook LMLaunchAd
-+ (BOOL)shouldShow:(id)arg0 {
-    NSLOG(@"[LMLaunchAd shouldShow:] arg=%@ -> NO", arg0);
-    return NO;
-}
++ (BOOL)shouldShow:(id)arg0 { return NO; }
 %end
 
 %hook LMLaunchAdMaxShowCountBridge
-+ (BOOL)shouldShow:(id)arg0 {
-    NSLOG(@"[LMLaunchAdMaxShowCountBridge shouldShow:] arg=%@ -> NO", arg0);
-    return NO;
-}
++ (BOOL)shouldShow:(id)arg0 { return NO; }
 %end
