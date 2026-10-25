@@ -2,7 +2,16 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-#pragma mark - 通用
+static void DBG(NSString *fmt, ...) {
+    FILE *f = fopen("/var/mobile/Library/Preferences/com.tzyhb.dbg", "a");
+    if (!f) return;
+    va_list ap; va_start(ap, fmt);
+    NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_end(ap);
+    fputs([s UTF8String], f);
+    fputc('\n', f);
+    fclose(f);
+}
 
 static IMP install_hook(Class cls, SEL sel, IMP newImp) {
     if (!cls) return NULL;
@@ -31,29 +40,35 @@ static NSString *describeView(UIView *v) {
 static BOOL textLooksLikeWelfare(NSString *text) {
     if (text.length == 0) return NO;
     return [text containsString:@"福利"] || [text containsString:@"赚钱"] ||
-           [text containsString:@"金币"] || [text containsString:@"免费"] ||
-           [text containsString:@"权益"] || [text containsString:@"红包"] ||
-           [text containsString:@"奖励"] || [text containsString:@"提现"];
+           [text containsString:@"金币"] || [text containsString:@"免费"];
 }
 
 static BOOL isTabBarItem(UIView *v) {
     return [NSStringFromClass(v.class) containsString:@"TabBarItemView"];
 }
 
-#pragma mark - 福利 tab 隐藏 + 重排（hook setFrame:）
-
 static IMP orig_TBI_setFrame = NULL;
+static int g_call = 0;
+
 static void hook_TBI_setFrame(id self, SEL _cmd, CGRect frame) {
     UIView *v = (UIView *)self;
     UIView *parent = v.superview;
+    g_call++;
+
+    if (g_call <= 15) {
+        DBG(@"[setFrame] #%d cls=%s parent=%s frame=(%.1f,%.1f,%.1f,%.1f)",
+            g_call, class_getName([v class]),
+            parent ? class_getName([parent class]) : "nil",
+            frame.origin.x, frame.origin.y, frame.size.width, frame.size.height);
+    }
 
     if (!parent || ![NSStringFromClass(parent.class) containsString:@"TabBarView"]) {
         if (orig_TBI_setFrame) ((void(*)(id, SEL, CGRect))orig_TBI_setFrame)(self, _cmd, frame);
         return;
     }
 
-    /* 福利 tab：扔到屏幕外 */
     if (textLooksLikeWelfare(describeView(v))) {
+        DBG(@"[setFrame] WELFARE HIT -> x=-2000");
         v.hidden = YES;
         v.userInteractionEnabled = NO;
         frame.origin.x = -2000;
@@ -61,7 +76,6 @@ static void hook_TBI_setFrame(id self, SEL _cmd, CGRect frame) {
         return;
     }
 
-    /* 收集所有非福利 item，按 parent.subviews 里的原始顺序 */
     NSMutableArray<UIView *> *visible = [NSMutableArray array];
     for (UIView *s in parent.subviews) {
         if (!isTabBarItem(s)) continue;
@@ -73,12 +87,8 @@ static void hook_TBI_setFrame(id self, SEL _cmd, CGRect frame) {
         if (orig_TBI_setFrame) ((void(*)(id, SEL, CGRect))orig_TBI_setFrame)(self, _cmd, frame);
         return;
     }
-
-    /* 均匀铺满：x = margin + idx * (itemW + spacing) */
-    CGFloat viewW = parent.bounds.size.width;
-    if (viewW <= 0) viewW = 393.0;
-    CGFloat itemW = frame.size.width;
-    if (itemW <= 0) itemW = 60.0;
+    CGFloat viewW = parent.bounds.size.width > 0 ? parent.bounds.size.width : 393.0;
+    CGFloat itemW = frame.size.width > 0 ? frame.size.width : 60.0;
     CGFloat margin = 15.0;
     CGFloat spacing = (N > 1) ? (viewW - 2 * margin - N * itemW) / (N - 1) : 0;
     frame.origin.x = margin + idx * (itemW + spacing);
@@ -86,26 +96,30 @@ static void hook_TBI_setFrame(id self, SEL _cmd, CGRect frame) {
     if (orig_TBI_setFrame) ((void(*)(id, SEL, CGRect))orig_TBI_setFrame)(self, _cmd, frame);
 }
 
-static BOOL g_tbi_installed = NO;
+static BOOL g_installed = NO;
+
 static void InstallTabBarHooks(void) {
-    if (g_tbi_installed) return;
+    if (g_installed) return;
     Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
+    DBG(@"[install] tbi=%p", tbi);
     if (!tbi) return;
+    Method m = class_getInstanceMethod(tbi, @selector(setFrame:));
+    DBG(@"[install] setFrame m=%p enc=%s", m, m ? method_getTypeEncoding(m) : "nil");
     orig_TBI_setFrame = install_hook(tbi, @selector(setFrame:), (IMP)hook_TBI_setFrame);
-    if (orig_TBI_setFrame) g_tbi_installed = YES;
+    DBG(@"[install] orig=%p", orig_TBI_setFrame);
+    if (orig_TBI_setFrame) g_installed = YES;
 }
 
 %ctor {
+    DBG(@"=== ctor loaded pid=%d ===", getpid());
     InstallTabBarHooks();
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallTabBarHooks();
     });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallTabBarHooks();
     });
 }
-
-#pragma mark - 开屏广告（TME 体系，全部拦判断方法）
 
 %hook TMEAdOperateSplash
 + (BOOL)needShowSplashWithLaunchType:(BOOL)arg0 { return NO; }
