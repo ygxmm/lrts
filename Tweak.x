@@ -89,14 +89,22 @@ static void hook_TBV_update(id self, SEL _cmd) {
 }
 
 /* ============ 定时器兜底（300ms） ============ */
-static void timerTick(void) {
-    UIWindow *window = UIApplication.sharedApplication.keyWindow;
-    if (!window) {
-        for (UIWindow *w in UIApplication.sharedApplication.windows) {
-            if (w.isKeyWindow) { window = w; break; }
+static UIWindow *currentKeyWindow(void) {
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            UIWindowScene *ws = (UIWindowScene *)scene;
+            for (UIWindow *w in ws.windows) {
+                if (w.isKeyWindow) return w;
+            }
         }
-        if (!window) return;
     }
+    return nil;
+}
+
+static void timerTick(void) {
+    UIWindow *window = currentKeyWindow();
+    if (!window) return;
     NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:window];
     while (queue.count > 0) {
         UIView *cur = queue.firstObject;
