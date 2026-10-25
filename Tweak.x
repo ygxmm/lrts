@@ -2,13 +2,22 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-static IMP install_hook(Class cls, SEL sel, IMP newImp) {
-    if (!cls) return NULL;
-    Method m = class_getInstanceMethod(cls, sel);
-    if (!m) return NULL;
-    IMP orig = method_getImplementation(m);
-    if (class_addMethod(cls, sel, newImp, method_getTypeEncoding(m))) return orig;
-    return method_setImplementation(m, newImp);
+static void DBG(NSString *fmt, ...) {
+    static NSString *path = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSArray *dirs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+        NSString *dir = dirs.firstObject ?: NSTemporaryDirectory();
+        path = [dir stringByAppendingPathComponent:@"LazyAudioNoSplash.log"];
+    });
+    va_list ap; va_start(ap, fmt);
+    NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_end(ap);
+    FILE *f = fopen(path.UTF8String, "a");
+    if (!f) return;
+    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], s];
+    fputs(line.UTF8String, f);
+    fclose(f);
 }
 
 static void collectTexts(UIView *v, NSMutableSet<NSString *> *out) {
@@ -36,96 +45,113 @@ static BOOL isTabBarItem(UIView *v) {
     return [NSStringFromClass(v.class) containsString:@"TabBarItemView"];
 }
 
-static void doRelayout(UIView *tabBarView) {
+/* 唯一的修正：view 层隐藏 + 重排 */
+static void relayoutView(UIView *tabBarView) {
     if (!tabBarView) return;
-
-    BOOL hasWelfare = NO;
+    BOOL hid = NO;
     for (UIView *sub in tabBarView.subviews) {
         if (!isTabBarItem(sub)) continue;
         if (textLooksLikeWelfare(describeView(sub))) {
-            if (!sub.hidden) {
-                sub.hidden = YES;
-                sub.userInteractionEnabled = NO;
-                sub.transform = CGAffineTransformMakeTranslation(-3000, 0);
-            }
-            hasWelfare = YES;
+            sub.hidden = YES;
+            sub.alpha = 0;
+            sub.userInteractionEnabled = NO;
+            sub.transform = CGAffineTransformMakeTranslation(-5000, 0);
+            hid = YES;
         }
     }
-    if (!hasWelfare) return;
+    if (!hid) return;
 
-    NSMutableArray<UIView *> *visible = [NSMutableArray array];
-    for (UIView *sub in tabBarView.subviews) {
-        if (isTabBarItem(sub) && !sub.hidden) [visible addObject:sub];
+    NSMutableArray<UIView *> *vis = [NSMutableArray array];
+    for (UIView *s in tabBarView.subviews) {
+        if (isTabBarItem(s) && !s.hidden) [vis addObject:s];
     }
-    NSUInteger N = visible.count;
-    if (N == 0) return;
+    NSUInteger N = vis.count;
+    if (N < 2) return;
 
     CGFloat viewW = tabBarView.bounds.size.width > 0 ? tabBarView.bounds.size.width : 393.0;
-    CGFloat itemW = 60.0;
-    CGFloat margin = 15.0;
-    CGFloat spacing = (N > 1) ? (viewW - 2 * margin - N * itemW) / (N - 1) : 0;
-
+    CGFloat itemW = 60.0, margin = 15.0;
+    CGFloat spacing = (viewW - 2 * margin - N * itemW) / (N - 1);
+    if (spacing < 0) spacing = 0;
     for (NSUInteger i = 0; i < N; i++) {
-        UIView *item = visible[i];
+        UIView *item = vis[i];
         item.transform = CGAffineTransformIdentity;
-        CGFloat origX = item.frame.origin.x;
-        CGFloat targetX = margin + i * (itemW + spacing);
-        CGFloat dx = targetX - origX;
-        if (fabs(dx) > 0.5) {
-            item.transform = CGAffineTransformMakeTranslation(dx, 0);
-        }
+        CGRect f = item.frame;
+        f.origin.x = margin + i * (itemW + spacing);
+        item.frame = f;
     }
+    DBG(@"[relayout] N=%lu", (unsigned long)N);
 }
 
-/* ============ hook TabBarView.updateNormalTabBarHandler ============ */
-static IMP orig_TBV_update = NULL;
-static void hook_TBV_update(id self, SEL _cmd) {
-    if (orig_TBV_update) ((void(*)(id, SEL))orig_TBV_update)(self, _cmd);
-    __weak UIView *weakSelf = (UIView *)self;
+/* hook updateNormalTabBarHandler：打印 items 结构 + 在 %orig 后重排 */
+static IMP orig_update = NULL;
+static void hook_update(id self, SEL _cmd) {
+    DBG(@"[update] ENTER");
+    id items = nil;
+    @try {
+        items = [self valueForKey:@"items"];
+    } @catch (NSException *e) {
+        DBG(@"[update] KVC items throw: %@", e.reason);
+    }
+    if ([items isKindOfClass:[NSArray class]]) {
+        NSArray *arr = items;
+        DBG(@"[update] items count=%lu", (unsigned long)arr.count);
+        for (NSUInteger i = 0; i < arr.count && i < 10; i++) {
+            id it = arr[i];
+            DBG(@"[update] item[%lu] class=%@ desc=%@", (unsigned long)i, NSStringFromClass([it class]), it);
+        }
+    } else {
+        DBG(@"[update] items=%@ class=%@", items, items ? NSStringFromClass([items class]) : @"nil");
+    }
+
+    if (orig_update) ((void(*)(id, SEL))orig_update)(self, _cmd);
+
+    __weak UIView *w = (UIView *)self;
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIView *strongSelf = weakSelf;
-        if (strongSelf) doRelayout(strongSelf);
+        UIView *s = w;
+        if (s) relayoutView(s);
     });
 }
 
-/* ============ 定时器兜底（300ms） ============ */
-static UIWindow *currentKeyWindow(void) {
-    if (@available(iOS 13.0, *)) {
-        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-            UIWindowScene *ws = (UIWindowScene *)scene;
-            for (UIWindow *w in ws.windows) {
-                if (w.isKeyWindow) return w;
-            }
-        }
-    }
-    return nil;
-}
-
-static void timerTick(void) {
-    UIWindow *window = currentKeyWindow();
-    if (!window) return;
-    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:window];
-    while (queue.count > 0) {
-        UIView *cur = queue.firstObject;
-        [queue removeObjectAtIndex:0];
-        if ([NSStringFromClass(cur.class) containsString:@"TabBarView"]) {
-            doRelayout(cur);
-        }
-        [queue addObjectsFromArray:cur.subviews];
+/* hook TabBarItemView.layoutSubviews 兜底（每次 item 布局也尝试重排） */
+static IMP orig_tbi_layout = NULL;
+static void hook_tbi_layout(id self, SEL _cmd) {
+    if (orig_tbi_layout) ((void(*)(id, SEL))orig_tbi_layout)(self, _cmd);
+    UIView *v = (UIView *)self;
+    UIView *p = v.superview;
+    if (p && [NSStringFromClass(p.class) containsString:@"TabBarView"]) {
+        relayoutView(p);
     }
 }
 
-static BOOL g_installed = NO;
+static BOOL g_update_ok = NO, g_tbi_ok = NO;
+
 static void InstallHooks(void) {
-    if (g_installed) return;
     Class tbv = NSClassFromString(@"lazyaudio.TabBarView");
-    if (!tbv) return;
-    orig_TBV_update = install_hook(tbv, sel_registerName("updateNormalTabBarHandler"), (IMP)hook_TBV_update);
-    if (orig_TBV_update) g_installed = YES;
+    if (tbv && !g_update_ok) {
+        SEL s = sel_registerName("updateNormalTabBarHandler");
+        Method m = class_getInstanceMethod(tbv, s);
+        DBG(@"[install] TBV.updateNormalTabBarHandler m=%p enc=%s", m, m ? method_getTypeEncoding(m) : "nil");
+        if (m) {
+            orig_update = method_setImplementation(m, (IMP)hook_update);
+            g_update_ok = YES;
+            DBG(@"[install] update hooked orig=%p", orig_update);
+        }
+    }
+    Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
+    if (tbi && !g_tbi_ok) {
+        SEL s = @selector(layoutSubviews);
+        Method m = class_getInstanceMethod(tbi, s);
+        DBG(@"[install] TBI.layoutSubviews m=%p", m);
+        if (m) {
+            orig_tbi_layout = method_setImplementation(m, (IMP)hook_tbi_layout);
+            g_tbi_ok = YES;
+            DBG(@"[install] TBI.layoutSubviews hooked orig=%p", orig_tbi_layout);
+        }
+    }
 }
 
 %ctor {
+    DBG(@"=== ctor pid=%d ===", getpid());
     InstallHooks();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallHooks();
@@ -133,34 +159,23 @@ static void InstallHooks(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallHooks();
     });
-
-    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC, 30 * NSEC_PER_MSEC);
-    dispatch_source_set_event_handler(timer, ^{
-        timerTick();
-    });
-    dispatch_resume(timer);
 }
 
 %hook TMEAdOperateSplash
 + (BOOL)needShowSplashWithLaunchType:(BOOL)arg0 { return NO; }
 - (BOOL)canPreLoadAMSSplash { return NO; }
 %end
-
 %hook TMEAdOperateIntervalManager
 - (BOOL)canShowSplash:(BOOL)arg0 { return NO; }
 %end
-
 %hook TMEAdOperateSplashManager
 - (BOOL)checkAdCanShow:(id)arg0 { return NO; }
 - (BOOL)hasP0AdSplashCanShow { return NO; }
 - (BOOL)hasP1AdSplashCanShow:(id)arg0 { return NO; }
 %end
-
 %hook LMLaunchAd
 + (BOOL)shouldShow:(id)arg0 { return NO; }
 %end
-
 %hook LMLaunchAdMaxShowCountBridge
 + (BOOL)shouldShow:(id)arg0 { return NO; }
 %end
