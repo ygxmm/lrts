@@ -29,100 +29,60 @@ static IMP install_hook(Class cls, SEL sel, IMP newImp, const char *name) {
     return orig;
 }
 
-static void collectTexts(UIView *v, NSMutableSet<NSString *> *out) {
-    if (!v) return;
-    if ([v isKindOfClass:[UILabel class]]) {
-        UILabel *l = (UILabel *)v;
-        if (l.text.length) [out addObject:l.text];
-    }
-    for (UIView *s in v.subviews) collectTexts(s, out);
-}
-
-static BOOL itemIsWelfare(UIView *v) {
-    if (!v) return NO;
-    NSString *label = v.accessibilityLabel;
-    if (label.length && ([label containsString:@"福利"] || [label containsString:@"赚钱"] || [label containsString:@"金币"] || [label containsString:@"免费"])) return YES;
-    NSMutableSet *texts = [NSMutableSet set];
-    collectTexts(v, texts);
-    for (NSString *s in texts) {
-        if ([s containsString:@"福利"] || [s containsString:@"赚钱"] || [s containsString:@"金币"] || [s containsString:@"免费"]) return YES;
-    }
-    return NO;
-}
-
-static BOOL isTabItem(UIView *v) { return [NSStringFromClass(v.class) containsString:@"TabBarItemView"]; }
-static BOOL isTabView(UIView *v) { return [NSStringFromClass(v.class) containsString:@"TabBarView"]; }
-
-static void relayout(UIView *tbv) {
-    if (!tbv) return;
-    BOOL hid = NO;
-    for (UIView *s in tbv.subviews) {
-        if (!isTabItem(s)) continue;
-        if (itemIsWelfare(s)) {
-            s.hidden = YES;
-            s.userInteractionEnabled = NO;
-            s.transform = CGAffineTransformMakeTranslation(-5000, 0);
-            hid = YES;
+/* ============ 核心：只 Hook 底栏的 layoutSubviews ============ */
+static IMP orig_tbv_layout = NULL;
+static void hook_tbv_layout(id self, SEL _cmd) {
+    // 让 Swift 先完成它自己的排布
+    if (orig_tbv_layout) ((void(*)(id, SEL))orig_tbv_layout)(self, _cmd);
+    
+    UIView *tbv = (UIView *)self;
+    BOOL hasWelfare = NO;
+    
+    // 1. 隐藏福利，并打上标记
+    for (UIView *sub in tbv.subviews) {
+        if ([NSStringFromClass(sub.class) containsString:@"TabBarItemView"]) {
+            if (sub.tag == 3) { // 由 FLEX 截图确认：tag == 3 是福利
+                hasWelfare = YES;
+                sub.hidden = YES;
+                sub.alpha = 0;
+                sub.userInteractionEnabled = NO;
+                sub.transform = CGAffineTransformMakeTranslation(-9999, 0);
+            }
         }
     }
-    if (!hid) return;
-    NSMutableArray *vis = [NSMutableArray array];
-    for (UIView *s in tbv.subviews) if (isTabItem(s) && !s.hidden) [vis addObject:s];
-    NSUInteger N = vis.count;
-    if (N < 2) return;
-    CGFloat viewW = tbv.bounds.size.width > 0 ? tbv.bounds.size.width : 393.0;
-    CGFloat itemW = 60.0, margin = 15.0;
-    CGFloat spacing = (viewW - 2 * margin - N * itemW) / (N - 1);
-    if (spacing < 0) spacing = 0;
-    for (NSUInteger i = 0; i < N; i++) {
-        UIView *item = vis[i];
-        item.transform = CGAffineTransformIdentity;
-        CGRect f = item.frame;
-        f.origin.x = margin + i * (itemW + spacing);
-        item.frame = f;
+    
+    // 2. 安全隔离：如果这个 TabBarView 里没有福利，说明是别的页面（整合页），直接 return
+    if (!hasWelfare) return;
+    
+    // 3. 重排剩下的 4 个 Tab（0:听吧, 1:书架, 2:分类, 4:我的）
+    // 根据 393 宽度计算：间距为 41，x 坐标依次为 15, 116, 217, 318
+    for (UIView *sub in tbv.subviews) {
+        if ([NSStringFromClass(sub.class) containsString:@"TabBarItemView"] && sub.tag != 3) {
+            CGFloat targetX = 15.0;
+            if (sub.tag == 1) targetX = 116.0;
+            else if (sub.tag == 2) targetX = 217.0;
+            else if (sub.tag == 4) targetX = 318.0;
+            
+            // 用 transform 定位，不会被底层的 AutoLayout 重置
+            sub.transform = CGAffineTransformIdentity;
+            CGFloat dx = targetX - sub.frame.origin.x;
+            if (fabs(dx) > 0.5) {
+                sub.transform = CGAffineTransformMakeTranslation(dx, 0);
+            }
+        }
     }
-    DBG(@"[relayout] N=%lu", (unsigned long)N);
-}
-
-static IMP orig_update = NULL;
-static void hook_update(id self, SEL _cmd) {
-    DBG(@"[update] ENTER");
-    if (orig_update) ((void(*)(id, SEL))orig_update)(self, _cmd);
-    relayout((UIView *)self);
-}
-
-static IMP orig_setLabel = NULL;
-static void hook_setLabel(id self, SEL _cmd, id label) {
-    DBG(@"[setLabel] %@", label);
-    if (orig_setLabel) ((void(*)(id, SEL, id))orig_setLabel)(self, _cmd, label);
-    UIView *v = (UIView *)self;
-    if (itemIsWelfare(v) && v.superview && isTabView(v.superview)) {
-        v.hidden = YES;
-        v.userInteractionEnabled = NO;
-        relayout(v.superview);
-    }
-}
-
-static IMP orig_setFrame = NULL;
-static void hook_setFrame(id self, SEL _cmd, CGRect frame) {
-    UIView *v = (UIView *)self;
-    if (v.superview && isTabView(v.superview) && itemIsWelfare(v)) {
-        v.hidden = YES;
-        frame.origin.x = -5000;
-    }
-    if (orig_setFrame) ((void(*)(id, SEL, CGRect))orig_setFrame)(self, _cmd, frame);
+    DBG(@"[relayout] TabBarView 重排完成");
 }
 
 %ctor {
     DBG(@"=== ctor pid=%d ===", getpid());
     Class tbv = NSClassFromString(@"lazyaudio.TabBarView");
-    Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
-    DBG(@"[class] tbv=%p tbi=%p", tbv, tbi);
-    orig_update = install_hook(tbv, sel_registerName("updateNormalTabBarHandler"), (IMP)hook_update, "TBV.updateNormalTabBarHandler");
-    orig_setLabel = install_hook(tbi, @selector(setAccessibilityLabel:), (IMP)hook_setLabel, "TBI.setAccessibilityLabel:");
-    orig_setFrame = install_hook(tbi, @selector(setFrame:), (IMP)hook_setFrame, "TBI.setFrame:");
+    if (tbv) {
+        orig_tbv_layout = install_hook(tbv, @selector(layoutSubviews), (IMP)hook_tbv_layout, "TBV.layoutSubviews");
+    }
 }
 
+/* ============ 开屏拦截（保持不变） ============ */
 %hook TMEAdOperateSplash
 + (BOOL)needShowSplashWithLaunchType:(BOOL)arg0 { return NO; }
 - (BOOL)canPreLoadAMSSplash { return NO; }
