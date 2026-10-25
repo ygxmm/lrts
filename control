@@ -1,9 +1,9 @@
 Package: com.tzyhb.lazyaudio-nosplash
 Name: LazyAudio NoSplash
-Version: 0.0.1
+Version: 0.1.0
 Architecture: iphoneos-arm64
-Description: LazyAudio 去开屏广告（仅拦判断方法）
+Description: 懒人听书去开屏广告 + 隐藏底栏福利 tab
 Maintainer: tzyhb
 Author: tzyhb
 Section: Tweaks
-Depends: mobilesubstrate
+Depends: ellekit, firmware (>= 15.0)

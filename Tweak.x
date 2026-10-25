@@ -1,35 +1,16 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
-#import <os/log.h>
 
-static os_log_t gLog;
+#pragma mark - 通用
 
-static NSString *GetLogPath(void) {
-    static NSString *path = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSArray *dirs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-        NSString *dir = dirs.firstObject ?: NSTemporaryDirectory();
-        path = [dir stringByAppendingPathComponent:@"LazyAudioNoSplash.log"];
-    });
-    return path;
-}
-
-static void NSLOG(NSString *fmt, ...) {
-    va_list ap; va_start(ap, fmt);
-    NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
-    va_end(ap);
-    if (gLog) os_log(gLog, "%{public}@", s);
-    NSString *path = GetLogPath();
-    if (path) {
-        FILE *f = fopen(path.UTF8String, "a");
-        if (f) {
-            NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], s];
-            fputs(line.UTF8String, f);
-            fclose(f);
-        }
-    }
+static IMP install_hook(Class cls, SEL sel, IMP newImp) {
+    if (!cls) return NULL;
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return NULL;
+    IMP orig = method_getImplementation(m);
+    if (class_addMethod(cls, sel, newImp, method_getTypeEncoding(m))) return orig;
+    return method_setImplementation(m, newImp);
 }
 
 static void collectTexts(UIView *v, NSMutableSet<NSString *> *out) {
@@ -55,20 +36,12 @@ static BOOL textLooksLikeWelfare(NSString *text) {
            [text containsString:@"奖励"] || [text containsString:@"提现"];
 }
 
-static IMP install_hook(Class cls, SEL sel, IMP newImp) {
-    if (!cls) return NULL;
-    Method m = class_getInstanceMethod(cls, sel);
-    if (!m) return NULL;
-    IMP orig = method_getImplementation(m);
-    if (class_addMethod(cls, sel, newImp, method_getTypeEncoding(m))) return orig;
-    return method_setImplementation(m, newImp);
-}
-
 static BOOL isTabBarItem(UIView *v) {
     return [NSStringFromClass(v.class) containsString:@"TabBarItemView"];
 }
 
-/* ============ 关键：hook setFrame: ============ */
+#pragma mark - 福利 tab 隐藏 + 重排（hook setFrame:）
+
 static IMP orig_TBI_setFrame = NULL;
 static void hook_TBI_setFrame(id self, SEL _cmd, CGRect frame) {
     UIView *v = (UIView *)self;
@@ -79,23 +52,19 @@ static void hook_TBI_setFrame(id self, SEL _cmd, CGRect frame) {
         return;
     }
 
-    /* 1. 如果这是福利 item → 扔到屏幕外 */
+    /* 福利 tab：扔到屏幕外 */
     if (textLooksLikeWelfare(describeView(v))) {
         v.hidden = YES;
         v.userInteractionEnabled = NO;
-        CGRect off = frame;
-        off.origin.x = -1000;
-        if (orig_TBI_setFrame) ((void(*)(id, SEL, CGRect))orig_TBI_setFrame)(self, _cmd, off);
+        frame.origin.x = -2000;
+        if (orig_TBI_setFrame) ((void(*)(id, SEL, CGRect))orig_TBI_setFrame)(self, _cmd, frame);
         return;
     }
 
-    /* 2. 按 parent.subviews 里的原始顺序，找出当前可见项列表 */
-    NSMutableArray<UIView *> *allItems = [NSMutableArray array];
-    for (UIView *s in parent.subviews) {
-        if (isTabBarItem(s)) [allItems addObject:s];
-    }
+    /* 收集所有非福利 item，按 parent.subviews 里的原始顺序 */
     NSMutableArray<UIView *> *visible = [NSMutableArray array];
-    for (UIView *s in allItems) {
+    for (UIView *s in parent.subviews) {
+        if (!isTabBarItem(s)) continue;
         if (!textLooksLikeWelfare(describeView(s))) [visible addObject:s];
     }
     NSUInteger N = visible.count;
@@ -105,7 +74,7 @@ static void hook_TBI_setFrame(id self, SEL _cmd, CGRect frame) {
         return;
     }
 
-    /* 3. 计算新位置 */
+    /* 均匀铺满：x = margin + idx * (itemW + spacing) */
     CGFloat viewW = parent.bounds.size.width;
     if (viewW <= 0) viewW = 393.0;
     CGFloat itemW = frame.size.width;
@@ -117,46 +86,46 @@ static void hook_TBI_setFrame(id self, SEL _cmd, CGRect frame) {
     if (orig_TBI_setFrame) ((void(*)(id, SEL, CGRect))orig_TBI_setFrame)(self, _cmd, frame);
 }
 
-static BOOL g_installed = NO;
-static void InstallHooks(void) {
-    if (g_installed) return;
+static BOOL g_tbi_installed = NO;
+static void InstallTabBarHooks(void) {
+    if (g_tbi_installed) return;
     Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
     if (!tbi) return;
     orig_TBI_setFrame = install_hook(tbi, @selector(setFrame:), (IMP)hook_TBI_setFrame);
-    if (orig_TBI_setFrame) {
-        g_installed = YES;
-        NSLOG(@"[hook] TBI.setFrame: installed");
-    }
+    if (orig_TBI_setFrame) g_tbi_installed = YES;
 }
 
 %ctor {
-    gLog = os_log_create("com.tzyhb.lazyaudio-nosplash", "tweak");
-    NSLOG(@"=== loaded pid=%d ===", getpid());
-    InstallHooks();
+    InstallTabBarHooks();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        InstallHooks();
+        InstallTabBarHooks();
     });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        InstallHooks();
+        InstallTabBarHooks();
     });
 }
 
-/* ============ 开屏 hook ============ */
+#pragma mark - 开屏广告（TME 体系，全部拦判断方法）
+
 %hook TMEAdOperateSplash
 + (BOOL)needShowSplashWithLaunchType:(BOOL)arg0 { return NO; }
 - (BOOL)canPreLoadAMSSplash { return NO; }
 %end
+
 %hook TMEAdOperateIntervalManager
 - (BOOL)canShowSplash:(BOOL)arg0 { return NO; }
 %end
+
 %hook TMEAdOperateSplashManager
 - (BOOL)checkAdCanShow:(id)arg0 { return NO; }
 - (BOOL)hasP0AdSplashCanShow { return NO; }
 - (BOOL)hasP1AdSplashCanShow:(id)arg0 { return NO; }
 %end
+
 %hook LMLaunchAd
 + (BOOL)shouldShow:(id)arg0 { return NO; }
 %end
+
 %hook LMLaunchAdMaxShowCountBridge
 + (BOOL)shouldShow:(id)arg0 { return NO; }
 %end
