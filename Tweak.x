@@ -2,14 +2,25 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
+static NSString *ProbePath(void) {
+    static NSString *p = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSArray *dirs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+        NSString *dir = dirs.firstObject ?: NSTemporaryDirectory();
+        p = [dir stringByAppendingPathComponent:@"LazyAudioNoSplash.log"];
+    });
+    return p;
+}
+
 static void DBG(NSString *fmt, ...) {
-    FILE *f = fopen("/var/mobile/Library/Preferences/com.tzyhb.dbg", "a");
-    if (!f) return;
     va_list ap; va_start(ap, fmt);
     NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
     va_end(ap);
-    fputs([s UTF8String], f);
-    fputc('\n', f);
+    FILE *f = fopen(ProbePath().UTF8String, "a");
+    if (!f) return;
+    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], s];
+    fputs(line.UTF8String, f);
     fclose(f);
 }
 
@@ -111,7 +122,7 @@ static void InstallTabBarHooks(void) {
 }
 
 %ctor {
-    DBG(@"=== ctor loaded pid=%d ===", getpid());
+    DBG(@"=== ctor loaded pid=%d home=%@ ===", getpid(), NSHomeDirectory());
     InstallTabBarHooks();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallTabBarHooks();
