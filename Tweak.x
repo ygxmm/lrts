@@ -26,7 +26,6 @@ __attribute__((constructor)) static void LAInit(void) {
     NSLog(@"[LazyAudio] tweak loaded");
 }
 
-// ========== 1. 底栏重排 ==========
 %hook UIView
 - (void)layoutSubviews {
     %orig;
@@ -48,10 +47,12 @@ __attribute__((constructor)) static void LAInit(void) {
             continue;
         }
         if (sub.tag == 3) {
-            sub.hidden = YES;
-            sub.alpha = 0.0;
-            sub.userInteractionEnabled = NO;
-            sub.frame = CGRectZero;
+            if (!sub.hidden) sub.hidden = YES;
+            if (sub.alpha != 0.0) sub.alpha = 0.0;
+            if (sub.userInteractionEnabled) sub.userInteractionEnabled = NO;
+            if (!CGRectEqualToRect(sub.frame, CGRectZero)) {
+                sub.frame = CGRectZero;
+            }
         } else {
             if (!visible) {
                 visible = [NSMutableArray array];
@@ -70,40 +71,59 @@ __attribute__((constructor)) static void LAInit(void) {
     if (W <= 0) {
         return;
     }
+
     UIView *first = visible.firstObject;
     CGFloat y = first.frame.origin.y;
     CGFloat h = first.frame.size.height;
     if (h <= 0) {
         h = self.bounds.size.height;
     }
-    CGFloat w = W / (CGFloat)n;
+
+    CGFloat itemW = first.frame.size.width;
+    if (itemW <= 0 || itemW > W) {
+        itemW = 60;
+    }
+
+    CGFloat margin = first.frame.origin.x;
+    if (margin < 0 || margin > W / 4) {
+        margin = 15;
+    }
+
+    CGFloat totalGap = W - 2 * margin - n * itemW;
+    CGFloat gap = (n > 1) ? totalGap / (n - 1) : 0;
+    if (gap < 0) {
+        gap = 0;
+    }
+
     for (NSUInteger i = 0; i < n; i++) {
-        visible[i].frame = CGRectMake(w * (CGFloat)i, y, w, h);
+        CGFloat x = margin + i * (itemW + gap);
+        CGRect target = CGRectMake(x, y, itemW, h);
+        if (!CGRectEqualToRect(visible[i].frame, target)) {
+            visible[i].frame = target;
+        }
     }
 }
 %end
 
-// ========== 2. TabBarItemView 兜底 ==========
 %hook _TtC9lazyaudio14TabBarItemView
 - (void)setTag:(NSInteger)tag {
     %orig;
     if (self.tag == 3) {
-        self.hidden = YES;
-        self.alpha = 0.0;
-        self.userInteractionEnabled = NO;
+        if (!self.hidden) self.hidden = YES;
+        if (self.alpha != 0.0) self.alpha = 0.0;
+        if (self.userInteractionEnabled) self.userInteractionEnabled = NO;
     }
 }
 - (void)didMoveToWindow {
     %orig;
     if (self.tag == 3) {
-        self.hidden = YES;
-        self.alpha = 0.0;
-        self.userInteractionEnabled = NO;
+        if (!self.hidden) self.hidden = YES;
+        if (self.alpha != 0.0) self.alpha = 0.0;
+        if (self.userInteractionEnabled) self.userInteractionEnabled = NO;
     }
 }
 %end
 
-// ========== 3. 开屏 Window ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
@@ -126,7 +146,6 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 4. 开屏 VC ==========
 %hook _TtC13Advertisement22SplashAdViewController
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
