@@ -1,88 +1,112 @@
-#import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
-// ================= 补充声明 =================
-@interface MeSignButton : UIView
+// Swift 类在 ObjC Runtime 下的实际类名前置声明
+@interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
-@interface LaunchSplashWindow : UIWindow
+@interface _TtC9lazyaudio12MeSignButton : UIView
 @end
-@interface TabBarItemView : UIView
+@interface _TtC9lazyaudio18LaunchSplashWindow : UIWindow
 @end
-// ============================================
+@interface _TtC13Advertisement22SplashAdViewController : UIViewController
+@end
+@interface _TtC13Advertisement14SplashAdWindow : UIWindow
+@end
+@interface TGGDTSplashViewController : UIViewController
+@end
 
-// ================= 1. 干掉签到按钮 =================
-%hook MeSignButton
+// 1. 隐藏底部“福利”Tab：tag == 3，剩余 4 个自动重排
+%hook _TtC9lazyaudio14TabBarItemView
+- (void)setTag:(NSInteger)tag {
+    %orig;
+    if (self.tag == 3) {
+        self.hidden = YES;
+        self.alpha = 0.0;
+        self.userInteractionEnabled = NO;
+        self.center = CGPointMake(-9999, self.center.y);
+    }
+}
+- (void)didMoveToWindow {
+    %orig;
+    if (self.tag == 3) {
+        self.hidden = YES;
+        self.alpha = 0.0;
+        self.userInteractionEnabled = NO;
+        self.center = CGPointMake(-9999, self.center.y);
+    }
+}
+%end
+
+// 2. 干掉“签到领钱”按钮
+%hook _TtC9lazyaudio12MeSignButton
 - (void)didMoveToWindow {
     %orig;
     self.hidden = YES;
-    self.alpha = 0;
+    self.alpha = 0.0;
     self.userInteractionEnabled = NO;
 }
-%end
-
-// ================= 2. 干掉开屏 Window =================
-%hook LaunchSplashWindow
-
-- (void)makeKeyAndVisible {
-    // 拦截上屏
-}
-
-- (void)setHidden:(BOOL)hidden {
-    hidden = YES; // 核心修复：修改局部变量
-    %orig;        // 无参调用，直接应用修改后的变量
-}
-
-%end
-
-// 广点通广告 Window 同样处理
-%hook Advertisement_SplashAdWindow
-- (void)makeKeyAndVisible { /* 拦截上屏 */ }
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
     %orig;
 }
 %end
 
-// ================= 3. 干掉开屏广告控制器 =================
+// 3. 拦截 lazyaudio 开屏 Window
+%hook _TtC9lazyaudio18LaunchSplashWindow
+- (void)setHidden:(BOOL)hidden {
+    hidden = YES;
+    %orig;
+}
+- (void)makeKeyAndVisible {
+    %orig;
+    self.hidden = YES;
+}
+%end
+
+// 4. 拦截 Advertisement.SplashAdWindow
+%hook _TtC13Advertisement14SplashAdWindow
+- (void)setHidden:(BOOL)hidden {
+    hidden = YES;
+    %orig;
+}
+- (void)makeKeyAndVisible {
+    %orig;
+    self.hidden = YES;
+}
+%end
+
+// 5. 拦截 Advertisement.SplashAdViewController
+%hook _TtC13Advertisement22SplashAdViewController
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    self.view.hidden = YES;
+    [self dismissViewControllerAnimated:NO completion:nil];
+}
+%end
+
+// 6. 拦截广点通开屏控制器
 %hook TGGDTSplashViewController
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
     self.view.hidden = YES;
-    self.view.alpha = 0;
+    [self dismissViewControllerAnimated:NO completion:nil];
 }
 %end
 
-%hook Advertisement_SplashAdViewController
-- (void)viewDidAppear:(BOOL)animated {
-    %orig;
-    self.view.hidden = YES;
-    self.view.alpha = 0;
-}
-%end
-
-// ================= 4. 底栏福利去掉并自动重排 =================
-%hook TabBarItemView
-- (void)layoutSubviews {
-    %orig;
-    // 探针实锤 tag==3 是福利
-    if (self.tag == 3) {
-        self.hidden = YES;
-        self.alpha = 0;
-        self.userInteractionEnabled = NO;
-        self.center = CGPointMake(-9999, self.center.y); // 移出屏幕触发重排
-    }
-}
-%end
-
-// ================= 5. 弹窗拦截 =================
+// 7. 拦截 Alert / Popup / Coin / Reward 类弹窗
 %hook UIViewController
-- (void)presentViewController:(UIViewController *)vc animated:(BOOL)flag completion:(void (^)(void))completion {
-    NSString *clsName = NSStringFromClass([vc class]);
-    if ([clsName containsString:@"Alert"] || 
-        [clsName containsString:@"Popup"] || 
-        [clsName containsString:@"Coin"] ||
-        [clsName containsString:@"Reward"]) {
+- (void)presentViewController:(UIViewController *)viewControllerToPresent
+                     animated:(BOOL)flag
+                   completion:(void (^)(void))completion {
+    if (!viewControllerToPresent) {
+        %orig;
         return;
+    }
+    NSString *className = NSStringFromClass([viewControllerToPresent class]);
+    NSArray<NSString *> *blockedKeywords = @[@"Alert", @"Popup", @"Coin", @"Reward"];
+    for (NSString *keyword in blockedKeywords) {
+        if ([className rangeOfString:keyword options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            return;
+        }
     }
     %orig;
 }
