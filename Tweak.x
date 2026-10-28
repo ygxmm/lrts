@@ -1,7 +1,5 @@
 #import <UIKit/UIKit.h>
 
-@interface _TtC9lazyaudio10TabBarView : UIView
-@end
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
 @interface _TtC9lazyaudio12MeSignButton : UIView
@@ -15,56 +13,68 @@
 @interface TGGDTSplashViewController : UIViewController
 @end
 
-// ========== 1. 底栏重排：父视图布局后手动修正 4 个可见 item ==========
-%hook _TtC9lazyaudio10TabBarView
-- (void)layoutSubviews {
-    %orig;
+// 找到真正装多个 TabBarItemView 的祖先容器，然后重排
+static void LAFixTabBar(UIView *item) {
+    UIView *parent = item.superview;
+    while (parent) {
+        NSUInteger cnt = 0;
+        for (UIView *sub in parent.subviews) {
+            if ([NSStringFromClass([sub class]) containsString:@"TabBarItemView"]) cnt++;
+        }
+        if (cnt >= 2) break;
+        parent = parent.superview;
+    }
+    if (!parent) return;
 
-    NSMutableArray<UIView *> *visibleItems = [NSMutableArray array];
-    for (UIView *sub in self.subviews) {
+    NSMutableArray<UIView *> *visibles = [NSMutableArray array];
+    for (UIView *sub in parent.subviews) {
+        if (![sub isKindOfClass:[UIView class]]) continue;
         NSString *cls = NSStringFromClass([sub class]);
-        if ([cls containsString:@"TabBarItemView"]) {
-            if (sub.tag == 3) {
-                sub.hidden = YES;
-                sub.alpha = 0.0;
-                sub.userInteractionEnabled = NO;
-                sub.frame = CGRectZero;
-            } else {
-                [visibleItems addObject:sub];
-            }
+        if (![cls containsString:@"TabBarItemView"]) continue;
+        if (sub.tag == 3) {
+            sub.hidden = YES;
+            sub.alpha = 0.0;
+            sub.userInteractionEnabled = NO;
+            sub.frame = CGRectMake(-9999, sub.frame.origin.y, sub.frame.size.width, sub.frame.size.height);
+        } else {
+            [visibles addObject:sub];
         }
     }
 
-    NSUInteger count = visibleItems.count;
-    if (count == 0) return;
+    NSUInteger n = visibles.count;
+    if (n == 0) return;
 
-    CGFloat totalW = self.bounds.size.width;
-    if (totalW <= 0) return;
+    CGFloat W = parent.bounds.size.width;
+    CGFloat H = parent.bounds.size.height;
+    if (W <= 0) return;
 
-    UIView *firstItem = visibleItems.firstObject;
-    CGFloat itemY = firstItem.frame.origin.y;
-    CGFloat itemH = firstItem.frame.size.height;
-    if (itemH <= 0) itemH = self.bounds.size.height;
-    CGFloat itemW = totalW / (CGFloat)count;
+    CGFloat h = visibles.firstObject.frame.size.height;
+    if (h <= 0) h = H;
+    CGFloat y = visibles.firstObject.frame.origin.y;
+    if (isnan(y)) y = 0;
 
-    for (NSUInteger i = 0; i < count; i++) {
-        UIView *item = visibleItems[i];
-        item.frame = CGRectMake(itemW * (CGFloat)i, itemY, itemW, itemH);
+    CGFloat w = W / (CGFloat)n;
+    for (NSUInteger i = 0; i < n; i++) {
+        UIView *v = visibles[i];
+        v.frame = CGRectMake(w * i, y, w, h);
     }
 }
-%end
 
-// ========== 2. TabBarItemView 兜底 ==========
+// ========== 1. 底栏：隐藏福利 + 剩余 4 项均分 ==========
 %hook _TtC9lazyaudio14TabBarItemView
+
 - (void)setTag:(NSInteger)tag {
     %orig;
     if (self.tag == 3) {
         self.hidden = YES;
         self.alpha = 0.0;
         self.userInteractionEnabled = NO;
-        [self.superview setNeedsLayout];
     }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        LAFixTabBar(self);
+    });
 }
+
 - (void)didMoveToWindow {
     %orig;
     if (self.tag == 3) {
@@ -72,16 +82,14 @@
         self.alpha = 0.0;
         self.userInteractionEnabled = NO;
     }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        LAFixTabBar(self);
+    });
 }
-- (void)setFrame:(CGRect)frame {
-    if (self.tag == 3) {
-        frame = CGRectZero;
-    }
-    %orig;
-}
+
 %end
 
-// ========== 3. 签到按钮 ==========
+// ========== 2. 签到按钮 ==========
 %hook _TtC9lazyaudio12MeSignButton
 - (void)didMoveToWindow {
     %orig;
@@ -91,27 +99,15 @@
 }
 %end
 
-// ========== 4. 开屏 Window 拦截 ==========
+// ========== 3. 开屏 Window ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
-- (void)setHidden:(BOOL)hidden {
-    hidden = YES;
-    %orig;
-}
-- (void)makeKeyAndVisible {
-    %orig;
-    self.hidden = YES;
-}
+- (void)setHidden:(BOOL)hidden { hidden = YES; %orig; }
+- (void)makeKeyAndVisible { %orig; self.hidden = YES; }
 %end
 
 %hook _TtC13Advertisement14SplashAdWindow
-- (void)setHidden:(BOOL)hidden {
-    hidden = YES;
-    %orig;
-}
-- (void)makeKeyAndVisible {
-    %orig;
-    self.hidden = YES;
-}
+- (void)setHidden:(BOOL)hidden { hidden = YES; %orig; }
+- (void)makeKeyAndVisible { %orig; self.hidden = YES; }
 %end
 
 %hook _TtC13Advertisement22SplashAdViewController
@@ -130,15 +126,12 @@
 }
 %end
 
-// ========== 5. 弹窗拦截 ==========
+// ========== 4. 弹窗拦截 ==========
 %hook UIViewController
 - (void)presentViewController:(UIViewController *)viewControllerToPresent
                      animated:(BOOL)flag
                    completion:(void (^)(void))completion {
-    if (!viewControllerToPresent) {
-        %orig;
-        return;
-    }
+    if (!viewControllerToPresent) { %orig; return; }
     NSString *className = NSStringFromClass([viewControllerToPresent class]);
     NSArray<NSString *> *blockedKeywords = @[@"Alert", @"Popup", @"Coin", @"Reward"];
     for (NSString *keyword in blockedKeywords) {
