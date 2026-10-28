@@ -18,56 +18,56 @@ static BOOL IsTabBarItemView(UIView *v) {
     return [cls containsString:@"TabBarItemView"] && ![cls containsString:@"Player"];
 }
 
-%hook UIView
-- (void)layoutSubviews {
-    %orig;
-
-    NSMutableArray<UIView *> *items = [NSMutableArray array];
-    for (UIView *sub in self.subviews) {
-        if (IsTabBarItemView(sub)) {
-            [items addObject:sub];
-        }
-    }
-    if (items.count < 2) {
-        return;
-    }
-
-    NSMutableArray<UIView *> *visible = [NSMutableArray array];
-    for (UIView *item in items) {
-        if (item.tag == 3) {
-            item.hidden = YES;
-            item.alpha = 0.0;
-            item.userInteractionEnabled = NO;
-            item.frame = CGRectZero;
-        } else {
-            [visible addObject:item];
-        }
-    }
-
-    NSUInteger count = visible.count;
-    if (count == 0) {
-        return;
-    }
-
-    CGFloat totalW = self.bounds.size.width;
-    if (totalW <= 0) {
-        return;
-    }
-
-    UIView *first = visible.firstObject;
-    CGFloat y = first.frame.origin.y;
-    CGFloat h = first.frame.size.height;
-    if (h <= 0) {
-        h = self.bounds.size.height;
-    }
-    CGFloat w = totalW / (CGFloat)count;
-
-    for (NSUInteger i = 0; i < count; i++) {
-        UIView *item = visible[i];
-        item.frame = CGRectMake(w * (CGFloat)i, y, w, h);
-    }
-}
-%end
+//%hook UIView
+//- (void)layoutSubviews {
+//    %orig;
+//
+//    NSMutableArray<UIView *> *items = [NSMutableArray array];
+//    for (UIView *sub in self.subviews) {
+//        if (IsTabBarItemView(sub)) {
+//            [items addObject:sub];
+//        }
+//    }
+//    if (items.count < 2) {
+//        return;
+//    }
+//
+//    NSMutableArray<UIView *> *visible = [NSMutableArray array];
+//    for (UIView *item in items) {
+//        if (item.tag == 3) {
+//            item.hidden = YES;
+//            item.alpha = 0.0;
+//            item.userInteractionEnabled = NO;
+//            item.frame = CGRectZero;
+//        } else {
+//            [visible addObject:item];
+//        }
+//    }
+//
+//    NSUInteger count = visible.count;
+//    if (count == 0) {
+//        return;
+//    }
+//
+//    CGFloat totalW = self.bounds.size.width;
+//    if (totalW <= 0) {
+//        return;
+//    }
+//
+//    UIView *first = visible.firstObject;
+//    CGFloat y = first.frame.origin.y;
+//    CGFloat h = first.frame.size.height;
+//    if (h <= 0) {
+//        h = self.bounds.size.height;
+//    }
+//    CGFloat w = totalW / (CGFloat)count;
+//
+//    for (NSUInteger i = 0; i < count; i++) {
+//        UIView *item = visible[i];
+//        item.frame = CGRectMake(w * (CGFloat)i, y, w, h);
+//    }
+//}
+//%end
 
 %hook _TtC9lazyaudio14TabBarItemView
 - (void)setTag:(NSInteger)tag {
