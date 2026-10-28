@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <string.h>
 
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
@@ -227,28 +228,33 @@ static BOOL LAIsTabItem(UIView *v) {
         %orig;
         return;
     }
-    NSString *cls = NSStringFromClass([vc class]);
-    static NSArray *allow = nil;
-    static NSArray *blocked = nil;
-    if (!allow) {
-        allow = @[@"Probe", @"FLEX", @"Debug", @"Inspector", @"Console", @"ClassDump", @"Dump"];
-        blocked = @[@"Alert", @"Popup", @"Coin", @"Reward"];
-    }
-    for (NSString *k in allow) {
-        if ([cls rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) {
-            %orig;
-            return;
-        }
-    }
+
     if ([vc isKindOfClass:[UIAlertController class]]) {
         %orig;
         return;
     }
-    for (NSString *k in blocked) {
-        if ([cls rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) {
+
+    const char *name = class_getName([vc class]);
+
+    static const char *allowWords[] = {"Probe", "FLEX", "Debug", "Inspector", "Console", "ClassDump", "Dump", NULL};
+    for (int i = 0; allowWords[i]; i++) {
+        if (strcasestr(name, allowWords[i])) {
+            %orig;
             return;
         }
     }
+
+    static const char *blockWords[] = {"Alert", "Popup", "Coin", "Reward", NULL};
+    for (int i = 0; blockWords[i]; i++) {
+        if (strcasestr(name, blockWords[i])) {
+            NSLog(@"[LazyAudio] 拦截弹窗: %s", name);
+            if (completion) {
+                dispatch_async(dispatch_get_main_queue(), completion);
+            }
+            return;
+        }
+    }
+
     %orig;
 }
 %end
