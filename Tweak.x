@@ -9,30 +9,32 @@ static BOOL my_needShowSplash(id self, SEL _cmd, NSInteger type) { return NO; }
 static BOOL (*orig_hasP0AdSplash)(id, SEL) = NULL;
 static BOOL my_hasP0AdSplash(id self, SEL _cmd) { return NO; }
 
-// ================= 2. 视觉欺骗干掉新版 Swift 开屏 =================
-// 不拦截状态，只拦截视图出现，直接让它透明
-static void (*orig_splash_viewDidAppear)(id, SEL, BOOL) = NULL;
-static void my_splash_viewDidAppear(id self, SEL _cmd, BOOL animated) {
-    if (orig_splash_viewDidAppear) orig_splash_viewDidAppear(self, _cmd, animated);
+// ================= 2. 终极杀招：拦截广告 Window 上屏 =================
+static void (*orig_makeKeyAndVisible)(id, SEL) = NULL;
+static void my_makeKeyAndVisible(id self, SEL _cmd) {
+    UIWindow *win = (UIWindow *)self;
+    NSString *clsName = NSStringFromClass([win class]);
     
-    // 只要这个控制器出现了，直接把它的 view 隐藏并移出层级
-    UIViewController *vc = (UIViewController *)self;
-    vc.view.hidden = YES;
-    vc.view.alpha = 0;
-    vc.view.userInteractionEnabled = NO;
+    // 探针实锤：Advertisement.SplashAdWindow
+    // 只要是开屏广告 Window，或者名字带 Splash 的 Window，直接拦截，不让它上屏！
+    if ([clsName containsString:@"SplashAdWindow"] || [clsName containsString:@"SplashWindow"]) {
+        NSLog(@"[Tweak] 成功拦截开屏广告 Window: %@", clsName);
+        return; // 直接 return，不执行原方法，窗口永远不显示
+    }
+    
+    if (orig_makeKeyAndVisible) {
+        orig_makeKeyAndVisible(self, _cmd);
+    }
 }
 
-// ================= 3. 极简安全底栏隐藏 =================
+// ================= 3. 极简安全底栏 (只隐藏，底层自动重排) =================
 static void (*orig_tbi_layout)(id, SEL) = NULL;
 static void my_tbi_layout(id self, SEL _cmd) {
     if (orig_tbi_layout) orig_tbi_layout(self, _cmd);
-    UIView *v = (UIView *)self;
-    UIView *tbv = v.superview;
+    UIView *tbv = ((UIView *)self).superview;
+    if (!tbv || ![NSStringFromClass(tbv.class) containsString:@"TabBarView"] || tbv.bounds.size.width < 300) return;
 
-    if (!tbv || ![NSStringFromClass(tbv.class) containsString:@"TabBarView"]) return;
-    if (tbv.bounds.size.width < 300) return;
-
-    // 极度安全：只隐藏福利 tag 3，不修改坐标，底层会自动重排
+    // 极度安全：只隐藏福利 tag 3，绝对不碰坐标
     dispatch_async(dispatch_get_main_queue(), ^{
         for (UIView *sub in tbv.subviews) {
             if ([NSStringFromClass(sub.class) containsString:@"TabBarItemView"] && sub.tag == 3) {
@@ -58,14 +60,11 @@ static void my_tbi_layout(id self, SEL _cmd) {
         if (m) { orig_hasP0AdSplash = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)my_hasP0AdSplash); }
     }
 
-    // 新版开屏 (探针头文件里的 Advertisement.SplashAdViewController)
-    Class newSplashCls = NSClassFromString(@"Advertisement.SplashAdViewController");
-    if (newSplashCls) {
-        Method m = class_getInstanceMethod(newSplashCls, @selector(viewDidAppear:));
-        if (m) {
-            orig_splash_viewDidAppear = (void *)method_getImplementation(m);
-            method_setImplementation(m, (IMP)my_splash_viewDidAppear);
-        }
+    // 拦截 UIWindow 的 makeKeyAndVisible
+    Method mkWindow = class_getInstanceMethod([UIWindow class], @selector(makeKeyAndVisible));
+    if (mkWindow) {
+        orig_makeKeyAndVisible = (void *)method_getImplementation(mkWindow);
+        method_setImplementation(mkWindow, (IMP)my_makeKeyAndVisible);
     }
 
     // 底栏
