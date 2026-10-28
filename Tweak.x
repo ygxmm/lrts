@@ -18,7 +18,6 @@ static BOOL IsTabBarItemView(UIView *v) {
     return [cls containsString:@"TabBarItemView"] && ![cls containsString:@"Player"];
 }
 
-// ========== 1. 全局布局修正 ==========
 %hook UIView
 - (void)layoutSubviews {
     %orig;
@@ -70,7 +69,6 @@ static BOOL IsTabBarItemView(UIView *v) {
 }
 %end
 
-// ========== 2. TabBarItemView 兜底隐藏 + 触发重排 ==========
 %hook _TtC9lazyaudio14TabBarItemView
 - (void)setTag:(NSInteger)tag {
     %orig;
@@ -92,7 +90,6 @@ static BOOL IsTabBarItemView(UIView *v) {
 }
 %end
 
-// ========== 3. 签到按钮 ==========
 %hook _TtC9lazyaudio12MeSignButton
 - (void)didMoveToWindow {
     %orig;
@@ -102,7 +99,6 @@ static BOOL IsTabBarItemView(UIView *v) {
 }
 %end
 
-// ========== 4. 开屏 Window 拦截 ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
@@ -141,7 +137,6 @@ static BOOL IsTabBarItemView(UIView *v) {
 }
 %end
 
-// ========== 5. 弹窗拦截（放行探针） ==========
 %hook UIViewController
 - (void)presentViewController:(UIViewController *)vc
                      animated:(BOOL)flag
