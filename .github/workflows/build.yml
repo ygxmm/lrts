@@ -10,10 +10,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install deps
+      - name: Install deps and ldid
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lldb build-essential fakeroot libssl-dev libcurl4-openssl-dev libxml2-dev libncurses5-dev libpng-dev git make ldid xz-utils
+          sudo apt-get install -y clang lldb build-essential fakeroot libssl-dev libcurl4-openssl-dev libxml2-dev libncurses5-dev libpng-dev git make xz-utils libplist-dev wget
+          # 下载并安装 Linux 版的 ldid
+          wget https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 -O ldid
+          chmod +x ldid
+          sudo mv ldid /usr/local/bin/ldid
 
       - name: Setup Theos
         run: |
