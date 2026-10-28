@@ -22,11 +22,33 @@ static BOOL gEnablePopup = YES;
 static Class gTabItemClass = Nil;
 static char kLAIgnoredKey;
 
+static NSDictionary *LALoadSwitches(void) {
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+
+    NSString *home = NSHomeDirectory();
+    if (home.length > 0) {
+        [paths addObject:[home stringByAppendingPathComponent:@"Documents/switches.plist"]];
+    }
+    NSString *group = @"/var/mobile/Containers/Shared/AppGroup/C1A22E1E-A0E8-4602-B053-AFDDB8B982E0/Documents/switches.plist";
+    [paths addObject:group];
+    [paths addObject:@"/var/mobile/dyyy/lazyaudio-nosplash/switches.plist"];
+    [paths addObject:@"/var/jb/var/mobile/dyyy/lazyaudio-nosplash/switches.plist"];
+
+    for (NSString *p in paths) {
+        NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:p];
+        if (d) {
+            NSLog(@"[LazyAudio] 读取开关成功: %@", p);
+            return d;
+        }
+    }
+    NSLog(@"[LazyAudio] 未找到 switches.plist，尝试过: %@", paths);
+    return nil;
+}
+
 __attribute__((constructor)) static void LAInitSwitches(void) {
-    NSString *path = @"/var/mobile/dyyy/lazyaudio-nosplash/switches.plist";
-    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:path];
+    NSDictionary *d = LALoadSwitches();
     if (!d) {
-        NSLog(@"[LazyAudio] switches.plist 未找到，全部功能默认开启: %@", path);
+        NSLog(@"[LazyAudio] 全部功能默认开启");
         return;
     }
     gEnableTabBar     = d[@"tabbar"]     ? [d[@"tabbar"] boolValue]     : YES;
