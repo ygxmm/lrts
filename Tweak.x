@@ -19,9 +19,10 @@ static BOOL LAIsTabItem(UIView *v) {
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    NSLog(@"[LazyAudio] tweak loaded (soft splash, no VC)");
+    NSLog(@"[LazyAudio] tweak loaded (alpha-zero splash)");
 }
 
+// ========== 1. 底栏重排 ==========
 %hook UIView
 - (void)layoutSubviews {
     %orig;
@@ -101,6 +102,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
+// ========== 2. TabBarItemView 兜底 ==========
 %hook _TtC9lazyaudio14TabBarItemView
 - (void)setTag:(NSInteger)tag {
     %orig;
@@ -120,6 +122,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
+// ========== 3. lazyaudio 开屏 Window：只拦 setHidden ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
@@ -127,9 +130,14 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
+// ========== 4. 广告开屏 Window：alpha 强制归零 ==========
 %hook _TtC13Advertisement14SplashAdWindow
-- (void)setHidden:(BOOL)hidden {
-    hidden = YES;
+- (void)setAlpha:(CGFloat)alpha {
+    alpha = 0.0;
     %orig;
+}
+- (void)makeKeyAndVisible {
+    %orig;
+    self.alpha = 0.0;
 }
 %end
