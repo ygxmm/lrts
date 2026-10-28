@@ -17,7 +17,7 @@ static BOOL my_needShowSplash(id self, SEL _cmd, NSInteger type) { return NO; }
 static BOOL (*orig_hasP0AdSplash)(id, SEL) = NULL;
 static BOOL my_hasP0AdSplash(id self, SEL _cmd) { return NO; }
 
-// ================= 2. 击杀 AppPrepareController 开屏 =================
+// ================= 2. 击杀新版开屏 (只隐身，绝不拔根) =================
 static BOOL (*orig_isSplashVisible)(id, SEL) = NULL;
 static BOOL my_isSplashVisible(id self, SEL _cmd) { return NO; } 
 
@@ -25,30 +25,49 @@ static void (*orig_prepare_viewDidAppear)(id, SEL, BOOL) = NULL;
 static void my_prepare_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     if (orig_prepare_viewDidAppear) orig_prepare_viewDidAppear(self, _cmd, animated);
     
-    // 获取开屏视图和隐私弹窗，直接移除
+    // 绝对不 removeFromSuperview，只设为隐藏
     id launchView = getIvarSafe(self, "$__lazy_storage_$_launchView");
     if (launchView && [launchView isKindOfClass:[UIView class]]) {
-        UIView *v = (UIView *)launchView;
-        v.hidden = YES;
-        [v removeFromSuperview];
+        ((UIView *)launchView).hidden = YES;
+        ((UIView *)launchView).alpha = 0;
     }
     
     id agreementView = getIvarSafe(self, "$__lazy_storage_$_agreementView");
     if (agreementView && [agreementView isKindOfClass:[UIView class]]) {
-        UIView *v = (UIView *)agreementView;
-        v.hidden = YES;
-        [v removeFromSuperview];
+        ((UIView *)agreementView).hidden = YES;
+        ((UIView *)agreementView).alpha = 0;
     }
 }
 
-// ================= 3. 赚钱/签到挂件与悬浮球拦截 =================
-// 3.1 拦截 EarningTaskEntryView 的显示刷新
-static void (*orig_refreshWithIsVisible)(id, SEL, BOOL) = NULL;
-static void my_refreshWithIsVisible(id self, SEL _cmd, BOOL isVisible) {
-    if (orig_refreshWithIsVisible) orig_refreshWithIsVisible(self, _cmd, NO); // 强制传 NO
+// ================= 3. 安全拦截弹窗 (放行后秒关) =================
+static void (*orig_presentVC)(id, SEL, UIViewController *, BOOL, void (^)(void)) = NULL;
+static void my_presentVC(id self, SEL _cmd, UIViewController *vcToPresent, BOOL flag, void (^completion)(void)) {
+    if (vcToPresent) {
+        NSString *clsName = NSStringFromClass([vcToPresent class]);
+        // 只拦截明确带有 Reward/Task/Sign 等字眼的
+        NSArray *junkKeywords = @[@"Reward", @"Task", @"Sign", @"Coin", @"PremiumFreeListen"];
+        BOOL isJunk = NO;
+        for (NSString *kw in junkKeywords) {
+            if ([clsName localizedCaseInsensitiveContainsString:kw]) {
+                isJunk = YES;
+                break;
+            }
+        }
+        if (isJunk) {
+            // 用 0 动画弹出来，瞬间关掉
+            if (orig_presentVC) {
+                orig_presentVC(self, _cmd, vcToPresent, NO, ^{
+                    if (completion) completion();
+                    [vcToPresent dismissViewControllerAnimated:NO completion:nil];
+                });
+            }
+            return;
+        }
+    }
+    if (orig_presentVC) orig_presentVC(self, _cmd, vcToPresent, flag, completion);
 }
 
-// 3.2 拦截 EarningTaskBallView 的生命周期
+// ================= 4. 挂件与悬浮球安全拦截 (绝不碰初始化) =================
 static void (*orig_ball_didMove)(id, SEL) = NULL;
 static void my_ball_didMove(id self, SEL _cmd) {
     if (orig_ball_didMove) orig_ball_didMove(self, _cmd);
@@ -58,44 +77,12 @@ static void my_ball_didMove(id self, SEL _cmd) {
     v.userInteractionEnabled = NO;
 }
 
-// 3.3 拦截 OnlineEarningDrawer 单例拉出抽屉
-static id (*orig_drawer_shared)(id, SEL) = NULL;
-static id my_drawer_shared(id self, SEL _cmd) {
-    id instance = orig_drawer_shared(self, _cmd);
-    if (instance) {
-        [instance performSelector:@selector(close) withObject:nil];
-    }
-    return instance;
-}
-
-// ================= 4. 全局弹窗拦截 (基于分类 PopDialogView) =================
-static void (*orig_lmr_showPopDialog)(id, SEL) = NULL;
-static void my_lmr_showPopDialog(id self, SEL _cmd) {
-    NSString *clsName = NSStringFromClass([self class]);
-    
-    // 拦截包含 Reward, Sign, Task, Coin, PremiumFreeListen 的弹窗
-    NSArray *junkKeywords = @[@"Reward", @"Sign", @"Task", @"Coin", @"Gold", @"PremiumFreeListen"];
-    BOOL isJunk = NO;
-    for (NSString *kw in junkKeywords) {
-        if ([clsName localizedCaseInsensitiveContainsString:kw]) {
-            isJunk = YES;
-            break;
-        }
-    }
-    
-    if (isJunk) {
-        NSLog(@"[Tweak] 成功拦截弹窗 VC: %@", clsName);
-        // 如果它自身响应隐藏方法，直接隐藏；否则不调用原方法即可
-        if ([self respondsToSelector:@selector(lmr_hidePopDialogView:)]) {
-            #pragma clang diagnostic push
-            #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-            [self performSelector:@selector(lmr_hidePopDialogView:) withObject:nil];
-            #pragma clang diagnostic pop
-        }
-        return;
-    }
-    
-    if (orig_lmr_showPopDialog) orig_lmr_showPopDialog(self, _cmd);
+static void (*orig_online_didMove)(id, SEL) = NULL;
+static void my_online_didMove(id self, SEL _cmd) {
+    if (orig_online_didMove) orig_online_didMove(self, _cmd);
+    UIView *v = (UIView *)self;
+    v.hidden = YES;
+    v.alpha = 0;
 }
 
 // ================= 5. 底栏福利隐藏 + 完美 4 等分 =================
@@ -122,7 +109,7 @@ static void my_tbi_layout(id self, SEL _cmd) {
 
             if (items.count >= 5) {
                 CGFloat slotWidth = tbv.bounds.size.width / 4.0;
-                NSArray *validTags = @[@(0), @(1), @(2), @(4)];
+                NSArray *validTags = @[ @(0), @(1), @(2), @(4) ];
 
                 for (UIView *sub in items) {
                     if (sub.tag == 3) {
@@ -146,7 +133,7 @@ static void my_tbi_layout(id self, SEL _cmd) {
 
 // ================= 6. 初始化 Hook =================
 %ctor {
-    // 1. 老版开屏
+    // 老版开屏
     Class splashCls = NSClassFromString(@"TMEAdOperateSplash");
     if (splashCls) {
         Method m = class_getClassMethod(splashCls, @selector(needShowSplashWithLaunchType:));
@@ -158,7 +145,7 @@ static void my_tbi_layout(id self, SEL _cmd) {
         if (m) { orig_hasP0AdSplash = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)my_hasP0AdSplash); }
     }
 
-    // 2. 新版开屏
+    // 新版开屏
     Class prepareCls = NSClassFromString(@"lazyaudio.AppPrepareController");
     if (prepareCls) {
         Method mVisible = class_getInstanceMethod(prepareCls, @selector(isSplashVisible));
@@ -173,15 +160,7 @@ static void my_tbi_layout(id self, SEL _cmd) {
         }
     }
 
-    // 3. 赚钱组件拦截
-    Class entryCls = NSClassFromString(@"lazyaudio.EarningTaskEntryView");
-    if (entryCls) {
-        Method m = class_getInstanceMethod(entryCls, @selector(refreshWithIsVisible:));
-        if (m) {
-            orig_refreshWithIsVisible = (void *)method_getImplementation(m);
-            method_setImplementation(m, (IMP)my_refreshWithIsVisible);
-        }
-    }
+    // 赚钱挂件 (只 Hook 上屏时隐藏，不干预初始化)
     Class ballCls = NSClassFromString(@"lazyaudio.EarningTaskBallView");
     if (ballCls) {
         Method m = class_getInstanceMethod(ballCls, @selector(didMoveToWindow));
@@ -190,24 +169,24 @@ static void my_tbi_layout(id self, SEL _cmd) {
             method_setImplementation(m, (IMP)my_ball_didMove);
         }
     }
-    Class drawerCls = NSClassFromString(@"lazyaudio.OnlineEarningDrawer");
-    if (drawerCls) {
-        Method m = class_getClassMethod(drawerCls, @selector(shared));
+    Class onlineCls = NSClassFromString(@"lazyaudio.OnlineEarningNewEntryView");
+    if (onlineCls) {
+        Method m = class_getInstanceMethod(onlineCls, @selector(didMoveToWindow));
         if (m) {
-            orig_drawer_shared = (void *)method_getImplementation(m);
-            method_setImplementation(m, (IMP)my_drawer_shared);
+            orig_online_didMove = (void *)method_getImplementation(m);
+            method_setImplementation(m, (IMP)my_online_didMove);
         }
     }
 
-    // 4. 弹窗拦截 (PopDialogView 分类方法)
+    // 弹窗拦截
     Class vcCls = [UIViewController class];
-    Method mPop = class_getInstanceMethod(vcCls, @selector(lmr_showPopDialogView));
-    if (mPop) {
-        orig_lmr_showPopDialog = (void *)method_getImplementation(mPop);
-        method_setImplementation(mPop, (IMP)my_lmr_showPopDialog);
+    Method mPresent = class_getInstanceMethod(vcCls, @selector(presentViewController:animated:completion:));
+    if (mPresent) {
+        orig_presentVC = (void *)method_getImplementation(mPresent);
+        method_setImplementation(mPresent, (IMP)my_presentVC);
     }
 
-    // 5. 底栏
+    // 底栏
     Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
     if (tbi) {
         Method m = class_getInstanceMethod(tbi, @selector(layoutSubviews));
