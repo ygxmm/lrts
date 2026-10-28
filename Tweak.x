@@ -1,5 +1,4 @@
 #import <UIKit/UIKit.h>
-#import <objc/runtime.h>
 
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
@@ -15,59 +14,64 @@
 @end
 
 static Class gTabItemClass = Nil;
-static BOOL LAIsTabItemView(UIView *v) {
+static BOOL IsTabBarItemView(UIView *v) {
     if (!gTabItemClass) {
         gTabItemClass = objc_getClass("_TtC9lazyaudio14TabBarItemView");
     }
-    return gTabItemClass && [v isKindOfClass:gTabItemClass];
+    return gTabItemClass && [v class] == gTabItemClass;
 }
 
 %hook UIView
 - (void)layoutSubviews {
     %orig;
 
-    // 快速过滤：子视图少于 2 个直接返回，不创建任何对象
-    NSArray<UIView *> *subs = self.subviews;
-    if (subs.count < 2) {
+    if (self.subviews.count < 2) {
         return;
     }
 
-    // 只有直接子视图里出现 TabBarItemView 才进入重排
-    NSMutableArray<UIView *> *visible = nil;
-    for (UIView *sub in subs) {
-        if (!LAIsTabItemView(sub)) {
-            continue;
+    NSMutableArray<UIView *> *items = [NSMutableArray array];
+    for (UIView *sub in self.subviews) {
+        if (IsTabBarItemView(sub)) {
+            [items addObject:sub];
         }
-        if (sub.tag == 3) {
-            sub.hidden = YES;
-            sub.alpha = 0.0;
-            sub.userInteractionEnabled = NO;
-            sub.frame = CGRectZero;
+    }
+    if (items.count < 2) {
+        return;
+    }
+
+    NSMutableArray<UIView *> *visible = [NSMutableArray array];
+    for (UIView *item in items) {
+        if (item.tag == 3) {
+            item.hidden = YES;
+            item.alpha = 0.0;
+            item.userInteractionEnabled = NO;
+            item.frame = CGRectZero;
         } else {
-            if (!visible) {
-                visible = [NSMutableArray array];
-            }
-            [visible addObject:sub];
+            [visible addObject:item];
         }
     }
 
-    NSUInteger n = visible.count;
-    if (n == 0) {
+    NSUInteger count = visible.count;
+    if (count == 0) {
         return;
     }
-    CGFloat W = self.bounds.size.width;
-    if (W <= 0) {
+
+    CGFloat totalW = self.bounds.size.width;
+    if (totalW <= 0) {
         return;
     }
+
     UIView *first = visible.firstObject;
     CGFloat y = first.frame.origin.y;
     CGFloat h = first.frame.size.height;
     if (h <= 0) {
         h = self.bounds.size.height;
     }
-    CGFloat w = W / (CGFloat)n;
-    for (NSUInteger i = 0; i < n; i++) {
-        visible[i].frame = CGRectMake(w * (CGFloat)i, y, w, h);
+    CGFloat w = totalW / (CGFloat)count;
+
+    for (NSUInteger i = 0; i < count; i++) {
+        UIView *item = visible[i];
+        item.frame = CGRectMake(w * (CGFloat)i, y, w, h);
     }
 }
 %end
@@ -79,6 +83,7 @@ static BOOL LAIsTabItemView(UIView *v) {
         self.hidden = YES;
         self.alpha = 0.0;
         self.userInteractionEnabled = NO;
+        [self.superview setNeedsLayout];
     }
 }
 - (void)didMoveToWindow {
@@ -87,6 +92,7 @@ static BOOL LAIsTabItemView(UIView *v) {
         self.hidden = YES;
         self.alpha = 0.0;
         self.userInteractionEnabled = NO;
+        [self.superview setNeedsLayout];
     }
 }
 %end
@@ -146,13 +152,10 @@ static BOOL LAIsTabItemView(UIView *v) {
         %orig;
         return;
     }
+
     NSString *cls = NSStringFromClass([vc class]);
-    static NSArray *allow = nil;
-    static NSArray *blocked = nil;
-    if (!allow) {
-        allow = @[@"Probe", @"FLEX", @"Debug", @"Inspector", @"Console", @"ClassDump", @"Dump"];
-        blocked = @[@"Alert", @"Popup", @"Coin", @"Reward"];
-    }
+
+    NSArray *allow = @[@"Probe", @"FLEX", @"Debug", @"Inspector", @"Console", @"ClassDump", @"Dump"];
     for (NSString *k in allow) {
         if ([cls rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) {
             %orig;
@@ -163,6 +166,8 @@ static BOOL LAIsTabItemView(UIView *v) {
         %orig;
         return;
     }
+
+    NSArray *blocked = @[@"Alert", @"Popup", @"Coin", @"Reward"];
     for (NSString *k in blocked) {
         if ([cls rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) {
             return;
