@@ -7,6 +7,10 @@
 @end
 @interface _TtC13Advertisement14SplashAdWindow : UIWindow
 @end
+@interface _TtC13Advertisement22SplashAdViewController : UIViewController
+@end
+@interface TGGDTSplashViewController : UIViewController
+@end
 
 static Class gTabItemClass = Nil;
 static char kLAIgnoredKey;
@@ -19,7 +23,7 @@ static BOOL LAIsTabItem(UIView *v) {
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    NSLog(@"[LazyAudio] tweak loaded (soft splash)");
+    NSLog(@"[LazyAudio] tweak loaded (soft splash v2)");
 }
 
 // ========== 1. 底栏重排 ==========
@@ -122,7 +126,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 3. 温和版开屏：只拦 Window 的 setHidden ==========
+// ========== 3. 开屏 Window：只拦 setHidden ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
@@ -134,5 +138,22 @@ __attribute__((constructor)) static void LAInit(void) {
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
     %orig;
+}
+%end
+
+// ========== 4. 开屏 VC：只隐藏 view，不 dismiss ==========
+%hook _TtC13Advertisement22SplashAdViewController
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    if (!self.view.hidden) self.view.hidden = YES;
+    if (self.view.alpha != 0.0) self.view.alpha = 0.0;
+}
+%end
+
+%hook TGGDTSplashViewController
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    if (!self.view.hidden) self.view.hidden = YES;
+    if (self.view.alpha != 0.0) self.view.alpha = 0.0;
 }
 %end
