@@ -18,7 +18,7 @@ static BOOL IsTabBarItemView(UIView *v) {
     return [cls containsString:@"TabBarItemView"] && ![cls containsString:@"Player"];
 }
 
-// ========== 1. 全局布局修正：任何容器布局后，若直接子视图含底栏 item，则重排 ==========
+// ========== 1. 全局布局修正 ==========
 %hook UIView
 - (void)layoutSubviews {
     %orig;
@@ -29,7 +29,9 @@ static BOOL IsTabBarItemView(UIView *v) {
             [items addObject:sub];
         }
     }
-    if (items.count < 2) return;
+    if (items.count < 2) {
+        return;
+    }
 
     NSMutableArray<UIView *> *visible = [NSMutableArray array];
     for (UIView *item in items) {
@@ -44,15 +46,21 @@ static BOOL IsTabBarItemView(UIView *v) {
     }
 
     NSUInteger count = visible.count;
-    if (count == 0) return;
+    if (count == 0) {
+        return;
+    }
 
     CGFloat totalW = self.bounds.size.width;
-    if (totalW <= 0) return;
+    if (totalW <= 0) {
+        return;
+    }
 
     UIView *first = visible.firstObject;
     CGFloat y = first.frame.origin.y;
     CGFloat h = first.frame.size.height;
-    if (h <= 0) h = self.bounds.size.height;
+    if (h <= 0) {
+        h = self.bounds.size.height;
+    }
     CGFloat w = totalW / (CGFloat)count;
 
     for (NSUInteger i = 0; i < count; i++) {
@@ -96,13 +104,25 @@ static BOOL IsTabBarItemView(UIView *v) {
 
 // ========== 4. 开屏 Window 拦截 ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
-- (void)setHidden:(BOOL)hidden { hidden = YES; %orig; }
-- (void)makeKeyAndVisible { %orig; self.hidden = YES; }
+- (void)setHidden:(BOOL)hidden {
+    hidden = YES;
+    %orig;
+}
+- (void)makeKeyAndVisible {
+    %orig;
+    self.hidden = YES;
+}
 %end
 
 %hook _TtC13Advertisement14SplashAdWindow
-- (void)setHidden:(BOOL)hidden { hidden = YES; %orig; }
-- (void)makeKeyAndVisible { %orig; self.hidden = YES; }
+- (void)setHidden:(BOOL)hidden {
+    hidden = YES;
+    %orig;
+}
+- (void)makeKeyAndVisible {
+    %orig;
+    self.hidden = YES;
+}
 %end
 
 %hook _TtC13Advertisement22SplashAdViewController
@@ -126,20 +146,23 @@ static BOOL IsTabBarItemView(UIView *v) {
 - (void)presentViewController:(UIViewController *)vc
                      animated:(BOOL)flag
                    completion:(void (^)(void))completion {
-    if (!vc) { %orig; return; }
+    if (!vc) {
+        %orig;
+        return;
+    }
 
     NSString *cls = NSStringFromClass([vc class]);
 
-    // 放行调试/探针类
     NSArray *allow = @[@"Probe", @"FLEX", @"Debug", @"Inspector", @"Console", @"ClassDump", @"Dump"];
     for (NSString *k in allow) {
         if ([cls rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) {
-            %orig; return;
+            %orig;
+            return;
         }
     }
-    // 放行系统 Alert（探针选择菜单常用）
     if ([vc isKindOfClass:[UIAlertController class]]) {
-        %orig; return;
+        %orig;
+        return;
     }
 
     NSArray *blocked = @[@"Alert", @"Popup", @"Coin", @"Reward"];
