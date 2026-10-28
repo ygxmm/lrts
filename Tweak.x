@@ -3,6 +3,8 @@
 #import <string.h>
 #import <stdarg.h>
 
+static void LALog(NSString *fmt, ...);
+
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
 @interface _TtC9lazyaudio12MeSignButton : UIView
@@ -21,7 +23,7 @@ static void LALog(NSString *fmt, ...) {
     va_start(args, fmt);
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
     va_end(args);
-    NSLog(@"[LazyAudio] %@", msg);
+    LALog(@"%@", msg);
     NSString *dir = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
     if (!dir.length) return;
     NSString *path = [dir stringByAppendingPathComponent:@"lazyaudio-tweak.log"];
@@ -59,25 +61,26 @@ static NSDictionary *LALoadSwitches(void) {
     for (NSString *p in paths) {
         NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:p];
         if (d) {
-            NSLog(@"[LazyAudio] 读取开关成功: %@", p);
+            LALog(@"读取开关成功: %@", p);
             return d;
         }
     }
-    NSLog(@"[LazyAudio] 未找到 switches.plist，尝试过: %@", paths);
+    LALog(@"未找到 switches.plist，尝试过: %@", paths);
     return nil;
 }
 
 __attribute__((constructor)) static void LAInitSwitches(void) {
+    LALog(@"tweak loaded, home=%@", NSHomeDirectory());
     NSDictionary *d = LALoadSwitches();
     if (!d) {
-        NSLog(@"[LazyAudio] 全部功能默认开启");
+        LALog(@"全部功能默认开启");
         return;
     }
     gEnableTabBar     = d[@"tabbar"]     ? [d[@"tabbar"] boolValue]     : YES;
     gEnableSignButton = d[@"signbutton"] ? [d[@"signbutton"] boolValue] : YES;
     gEnableSplash     = d[@"splash"]     ? [d[@"splash"] boolValue]     : YES;
     gEnablePopup      = d[@"popup"]      ? [d[@"popup"] boolValue]      : YES;
-    NSLog(@"[LazyAudio] 开关 tabbar=%d sign=%d splash=%d popup=%d",
+    LALog(@"开关 tabbar=%d sign=%d splash=%d popup=%d",
           gEnableTabBar, gEnableSignButton, gEnableSplash, gEnablePopup);
 }
 
