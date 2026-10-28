@@ -20,12 +20,10 @@ jobs:
 
       - name: Setup Theos and iOS SDK
         run: |
-          # 克隆 roothide 版本的 Theos
           export THEOS=$HOME/theos
           git clone --recursive --depth 1 https://github.com/roothide/theos.git $THEOS
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           
-          # 克隆并安装 iOS SDK
           git clone --depth 1 https://github.com/theos/sdks.git $HOME/sdks
           mkdir -p $THEOS/sdks
           mv $HOME/sdks/iPhoneOS*.sdk $THEOS/sdks/
@@ -33,8 +31,14 @@ jobs:
 
       - name: Build
         run: |
+          # 核心魔法：把系统的 clang 软链接到 Theos 期望的路径下
+          mkdir -p $THEOS/toolchain/linux/iphone/bin
+          ln -sf $(which clang) $THEOS/toolchain/linux/iphone/bin/clang
+          ln -sf $(which clang++) $THEOS/toolchain/linux/iphone/bin/clang++
+          
+          # 显式指定编译目标（iOS 14.0），避免 Theos 找不到默认目标
           make clean || true
-          make package FINALPACKAGE=1
+          make package TARGET=iphone:clang:latest:14.0 FINALPACKAGE=1
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
