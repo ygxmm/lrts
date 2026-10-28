@@ -9,51 +9,64 @@ static BOOL my_needShowSplash(id self, SEL _cmd, NSInteger type) { return NO; }
 static BOOL (*orig_hasP0AdSplash)(id, SEL) = NULL;
 static BOOL my_hasP0AdSplash(id self, SEL _cmd) { return NO; }
 
-// ================= 2. 精准干掉新开屏 (AppPrepareController) =================
-// 探针给的：- (BOOL)isSplashVisible;
-// 直接骗系统说开屏不可见，它自然就不显示了，绝对不碰任何 KVC
+// ================= 2. 精准干掉新版开屏 (纯方法 Hook，绝不 KVC) =================
+// 根据探针头文件：lazyaudio.AppPrepareController
 static BOOL (*orig_isSplashVisible)(id, SEL) = NULL;
 static BOOL my_isSplashVisible(id self, SEL _cmd) {
-    return NO;
+    return NO; // 只要系统问“开屏可见吗”，直接回答 NO，系统自己会跳过
 }
 
-// ================= 3. 弹窗拦截 (安全版：让它弹出来，但秒关掉) =================
+// ================= 3. 拦截签到 / 金币弹窗 (防崩溃终极版) =================
 static void (*orig_presentVC)(id, SEL, UIViewController *, BOOL, void (^)(void)) = NULL;
-static void my_presentVC(id self, SEL _cmd, UIViewController *viewControllerToPresent, BOOL flag, void (^completion)(void)) {
-    if (viewControllerToPresent) {
-        NSString *clsName = NSStringFromClass([viewControllerToPresent class]);
-        // 签到、任务、赚钱弹窗关键词
-        NSArray *junkKeywords = @[@"Sign", @"CheckIn", @"Task", @"Reward", @"Earning", @"Coin", @"Activity", @"Popup"];
+static void my_presentVC(id self, SEL _cmd, UIViewController *vcToPresent, BOOL flag, void (^completion)(void)) {
+    if (vcToPresent) {
+        NSString *clsName = NSStringFromClass([vcToPresent class]);
+        // 根据头文件和常见命名拦截：签到、打卡、任务、奖励、金币、弹窗
+        NSArray *junkKeywords = @[@"Sign", @"CheckIn", @"Reward", @"Task", @"Coin", @"Gold", @"Popup", @"Activity"];
+        
+        BOOL isJunk = NO;
         for (NSString *keyword in junkKeywords) {
-            if ([clsName containsString:keyword]) {
-                NSLog(@"[Tweak] 发现恶心弹窗，即将秒关: %@", clsName);
-                // 绝不直接 return，因为那样会引发 UIKit 状态崩溃
-                // 先正常弹出来，并在 completion 里瞬间把它关掉
-                if (orig_presentVC) {
-                    orig_presentVC(self, _cmd, viewControllerToPresent, NO, ^{
-                        if (completion) completion();
-                        [viewControllerToPresent dismissViewControllerAnimated:NO completion:nil];
-                    });
-                }
-                return;
+            if ([clsName localizedCaseInsensitiveContainsString:keyword]) {
+                isJunk = YES;
+                break;
             }
         }
+        
+        if (isJunk) {
+            NSLog(@"[Tweak] 成功拦截弹窗: %@", clsName);
+            // 防闪退核心：正常走 present 流程（无动画），弹出来一瞬间立马把它关掉
+            if (orig_presentVC) {
+                orig_presentVC(self, _cmd, vcToPresent, NO, ^{
+                    if (completion) completion();
+                    [vcToPresent dismissViewControllerAnimated:NO completion:nil];
+                });
+            }
+            return;
+        }
     }
-    if (orig_presentVC) orig_presentVC(self, _cmd, viewControllerToPresent, flag, completion);
+    if (orig_presentVC) orig_presentVC(self, _cmd, vcToPresent, flag, completion);
 }
 
-// ================= 4. 悬浮球清扫 (安全版) =================
+// ================= 4. 定时清扫赚钱悬浮球 (防崩静默版) =================
 static void removeJunkViews(UIView *view) {
     if (!view) return;
     NSString *clsName = NSStringFromClass([view class]);
-    NSArray *junkKeywords = @[@"EarningTaskBallView", @"OnlineEarningNewLevitator", @"EarningTaskEntryView"];
-    for (NSString *keyword in junkKeywords) {
-        if ([clsName containsString:keyword]) {
-            view.hidden = YES;
-            view.alpha = 0;
-            break;
-        }
+    
+    // 探针头文件里真实的恶心类名
+    NSArray *junkClasses = @[
+        @"lazyaudio.EarningTaskBallView",
+        @"lazyaudio.OnlineEarningNewLevitator",
+        @"lazyaudio.EarningTaskEntryView",
+        @"lazyaudio.OnlineEarningNewTipsView"
+    ];
+    
+    if ([junkClasses containsObject:clsName]) {
+        view.hidden = YES;
+        view.alpha = 0;
+        view.userInteractionEnabled = NO;
+        return; // 整个隐藏掉，不用再遍历它的子视图了
     }
+    
     for (UIView *sub in view.subviews) {
         removeJunkViews(sub);
     }
@@ -133,7 +146,7 @@ static void my_tbi_layout(id self, SEL _cmd) {
         if (m) { orig_hasP0AdSplash = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)my_hasP0AdSplash); }
     }
 
-    // 2. 根据探针精准 Hook
+    // 根据头文件直接 Hook
     Class prepareCls = NSClassFromString(@"lazyaudio.AppPrepareController");
     if (prepareCls) {
         Method m = class_getInstanceMethod(prepareCls, @selector(isSplashVisible));
@@ -143,6 +156,7 @@ static void my_tbi_layout(id self, SEL _cmd) {
         }
     }
 
+    // 拦截弹窗
     Class vcCls = [UIViewController class];
     Method mPresent = class_getInstanceMethod(vcCls, @selector(presentViewController:animated:completion:));
     if (mPresent) {
@@ -150,6 +164,7 @@ static void my_tbi_layout(id self, SEL _cmd) {
         method_setImplementation(mPresent, (IMP)my_presentVC);
     }
 
+    // 启动悬浮球清扫器
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         startCleaner();
     });
