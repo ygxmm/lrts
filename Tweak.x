@@ -6,9 +6,7 @@
 static id getIvarSafe(id instance, const char *ivarName) {
     if (!instance) return nil;
     Ivar ivar = class_getInstanceVariable([instance class], ivarName);
-    if (ivar) {
-        return object_getIvar(instance, ivar);
-    }
+    if (ivar) return object_getIvar(instance, ivar);
     return nil;
 }
 
@@ -26,12 +24,15 @@ static BOOL my_isSplashVisible(id self, SEL _cmd) { return NO; }
 static void (*orig_prepare_viewDidAppear)(id, SEL, BOOL) = NULL;
 static void my_prepare_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     if (orig_prepare_viewDidAppear) orig_prepare_viewDidAppear(self, _cmd, animated);
+    
+    // 获取开屏视图和隐私弹窗，直接移除
     id launchView = getIvarSafe(self, "$__lazy_storage_$_launchView");
     if (launchView && [launchView isKindOfClass:[UIView class]]) {
         UIView *v = (UIView *)launchView;
         v.hidden = YES;
         [v removeFromSuperview];
     }
+    
     id agreementView = getIvarSafe(self, "$__lazy_storage_$_agreementView");
     if (agreementView && [agreementView isKindOfClass:[UIView class]]) {
         UIView *v = (UIView *)agreementView;
@@ -40,91 +41,39 @@ static void my_prepare_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-// ================= 3. 拦截弹窗 =================
-static void (*orig_presentVC)(id, SEL, UIViewController *, BOOL, void (^)(void)) = NULL;
-static void my_presentVC(id self, SEL _cmd, UIViewController *vcToPresent, BOOL flag, void (^completion)(void)) {
-    if (vcToPresent) {
-        NSString *clsName = NSStringFromClass([vcToPresent class]);
-        NSArray *junkKeywords = @[@"Reward", @"Task", @"Coin", @"Gold", @"Earning"];
-        for (NSString *keyword in junkKeywords) {
-            if ([clsName localizedCaseInsensitiveContainsString:keyword]) {
-                if (orig_presentVC) {
-                    orig_presentVC(self, _cmd, vcToPresent, NO, ^{
-                        if (completion) completion();
-                        [vcToPresent dismissViewControllerAnimated:NO completion:nil];
-                    });
-                }
-                return;
-            }
-        }
-    }
-    if (orig_presentVC) orig_presentVC(self, _cmd, vcToPresent, flag, completion);
+// ================= 3. 基于头文件的精准猎杀 =================
+
+// 3.1 拦截 EarningTaskEntryView 的显示请求
+// 头文件: - (void)refreshWithIsVisible:(BOOL)arg2;
+static void (*orig_refreshWithIsVisible)(id, SEL, BOOL) = NULL;
+static void my_refreshWithIsVisible(id self, SEL _cmd, BOOL isVisible) {
+    // 不管它传什么，我们强行传 NO，让它永远不显示
+    if (orig_refreshWithIsVisible) orig_refreshWithIsVisible(self, _cmd, NO);
 }
 
-// ================= 4. 终极清扫器 (类名+文字双重猎杀) =================
-static void removeJunkViews(UIView *view) {
-    if (!view) return;
-    NSString *clsName = NSStringFromClass([view class]);
-    
-    // 4.1 类名黑名单（悬浮球、诱导挂件）
-    NSArray *junkClasses = @[
-        @"lazyaudio.EarningTaskBallView",
-        @"lazyaudio.EarningTaskEntryView",
-        @"lazyaudio.OnlineEarningEntryView",
-        @"lazyaudio.OnlineEarningNewEntryView",
-        @"lazyaudio.OnlineEarningNewLevitator",
-        @"lazyaudio.OnlineEarningNewTipsView",
-        @"lazyaudio.PendingOrderCountdownView",
-        @"lazyaudio.PendingOrderEnterView",
-        @"lazyaudio.PendingOrderTipsView",
-        @"lazyaudio.GlobalFreeEnterView"
-    ];
-    
-    if ([junkClasses containsObject:clsName]) {
-        view.hidden = YES;
-        view.alpha = 0;
-        view.userInteractionEnabled = NO;
-        return;
-    }
-    
-    // 4.2 探针精准打击：寻找文字为“签到领钱”的 UIButton 或 UILabel
-    if ([view isKindOfClass:[UIButton class]]) {
-        UIButton *btn = (UIButton *)view;
-        NSString *title = [btn titleForState:UIControlStateNormal] ?: btn.currentTitle;
-        if (title && ([title containsString:@"签到"] || [title containsString:@"领钱"] || [title containsString:@"金币"])) {
-            // 杀掉按钮本身，并且尝试杀掉它的父视图（因为通常有个背板）
-            view.hidden = YES;
-            view.alpha = 0;
-            if (view.superview && view.superview.frame.size.width < 150) {
-                view.superview.hidden = YES;
-            }
-            return;
-        }
-    }
-    
-    if ([view isKindOfClass:[UILabel class]]) {
-        UILabel *lbl = (UILabel *)view;
-        if (lbl.text && ([lbl.text containsString:@"签到"] || [lbl.text containsString:@"领钱"])) {
-            view.hidden = YES;
-            view.alpha = 0;
-            return;
-        }
-    }
-    
-    for (UIView *sub in view.subviews) {
-        removeJunkViews(sub);
-    }
+// 3.2 拦截 EarningTaskBallView 的生命周期
+// 只要悬浮球想上屏幕，直接干掉
+static void (*orig_ball_didMove)(id, SEL) = NULL;
+static void my_ball_didMove(id self, SEL _cmd) {
+    if (orig_ball_didMove) orig_ball_didMove(self, _cmd);
+    UIView *v = (UIView *)self;
+    v.hidden = YES;
+    v.alpha = 0;
+    v.userInteractionEnabled = NO;
 }
 
-static void startCleaner() {
-    [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer * _Nonnull timer) {
-        for (UIWindow *window in [UIApplication sharedApplication].windows) {
-            removeJunkViews(window);
-        }
-    }];
+// 3.3 针对 OnlineEarningNewEntryView (它是 OnlineEarningEntryView 的子类)
+// 头文件有 - (void)updateStateWithIsEnforce:(BOOL)arg2;
+// 我们直接 Hook 它的 init 或者 didMoveToWindow 来隐藏
+static void (*orig_online_didMove)(id, SEL) = NULL;
+static void my_online_didMove(id self, SEL _cmd) {
+    if (orig_online_didMove) orig_online_didMove(self, _cmd);
+    UIView *v = (UIView *)self;
+    v.hidden = YES;
+    v.alpha = 0;
 }
 
-// ================= 5. 底栏福利隐藏 + 完美 4 等分 =================
+// ================= 4. 底栏福利隐藏 + 完美 4 等分 =================
 static void (*orig_tbi_layout)(id, SEL) = NULL;
 static void my_tbi_layout(id self, SEL _cmd) {
     if (orig_tbi_layout) orig_tbi_layout(self, _cmd);
@@ -170,8 +119,9 @@ static void my_tbi_layout(id self, SEL _cmd) {
     });
 }
 
-// ================= 6. 初始化 Hook =================
+// ================= 5. 初始化 Hook =================
 %ctor {
+    // 老开屏
     Class splashCls = NSClassFromString(@"TMEAdOperateSplash");
     if (splashCls) {
         Method m = class_getClassMethod(splashCls, @selector(needShowSplashWithLaunchType:));
@@ -183,6 +133,7 @@ static void my_tbi_layout(id self, SEL _cmd) {
         if (m) { orig_hasP0AdSplash = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)my_hasP0AdSplash); }
     }
 
+    // 新开屏
     Class prepareCls = NSClassFromString(@"lazyaudio.AppPrepareController");
     if (prepareCls) {
         Method mVisible = class_getInstanceMethod(prepareCls, @selector(isSplashVisible));
@@ -197,17 +148,38 @@ static void my_tbi_layout(id self, SEL _cmd) {
         }
     }
 
-    Class vcCls = [UIViewController class];
-    Method mPresent = class_getInstanceMethod(vcCls, @selector(presentViewController:animated:completion:));
-    if (mPresent) {
-        orig_presentVC = (void *)method_getImplementation(mPresent);
-        method_setImplementation(mPresent, (IMP)my_presentVC);
+    // 🌟 3. 基于头文件精准猎杀
+    // 3.1 EarningTaskEntryView 的 refreshWithIsVisible
+    Class entryCls = NSClassFromString(@"lazyaudio.EarningTaskEntryView");
+    if (entryCls) {
+        Method m = class_getInstanceMethod(entryCls, @selector(refreshWithIsVisible:));
+        if (m) {
+            orig_refreshWithIsVisible = (void *)method_getImplementation(m);
+            method_setImplementation(m, (IMP)my_refreshWithIsVisible);
+        }
     }
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        startCleaner();
-    });
+    // 3.2 EarningTaskBallView 的 didMoveToWindow
+    Class ballCls = NSClassFromString(@"lazyaudio.EarningTaskBallView");
+    if (ballCls) {
+        Method m = class_getInstanceMethod(ballCls, @selector(didMoveToWindow));
+        if (m) {
+            orig_ball_didMove = (void *)method_getImplementation(m);
+            method_setImplementation(m, (IMP)my_ball_didMove);
+        }
+    }
 
+    // 3.3 OnlineEarningNewEntryView 的 didMoveToWindow
+    Class onlineCls = NSClassFromString(@"lazyaudio.OnlineEarningNewEntryView");
+    if (onlineCls) {
+        Method m = class_getInstanceMethod(onlineCls, @selector(didMoveToWindow));
+        if (m) {
+            orig_online_didMove = (void *)method_getImplementation(m);
+            method_setImplementation(m, (IMP)my_online_didMove);
+        }
+    }
+
+    // 底栏
     Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
     if (tbi) {
         Method m = class_getInstanceMethod(tbi, @selector(layoutSubviews));
