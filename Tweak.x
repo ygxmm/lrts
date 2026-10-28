@@ -9,7 +9,20 @@ static BOOL my_needShowSplash(id self, SEL _cmd, NSInteger type) { return NO; }
 static BOOL (*orig_hasP0AdSplash)(id, SEL) = NULL;
 static BOOL my_hasP0AdSplash(id self, SEL _cmd) { return NO; }
 
-// ================= 2. 底栏福利隐藏 + 完美 4 等分 =================
+// ================= 2. 视觉欺骗干掉新版 Swift 开屏 =================
+// 不拦截状态，只拦截视图出现，直接让它透明
+static void (*orig_splash_viewDidAppear)(id, SEL, BOOL) = NULL;
+static void my_splash_viewDidAppear(id self, SEL _cmd, BOOL animated) {
+    if (orig_splash_viewDidAppear) orig_splash_viewDidAppear(self, _cmd, animated);
+    
+    // 只要这个控制器出现了，直接把它的 view 隐藏并移出层级
+    UIViewController *vc = (UIViewController *)self;
+    vc.view.hidden = YES;
+    vc.view.alpha = 0;
+    vc.view.userInteractionEnabled = NO;
+}
+
+// ================= 3. 极简安全底栏隐藏 =================
 static void (*orig_tbi_layout)(id, SEL) = NULL;
 static void my_tbi_layout(id self, SEL _cmd) {
     if (orig_tbi_layout) orig_tbi_layout(self, _cmd);
@@ -17,52 +30,21 @@ static void my_tbi_layout(id self, SEL _cmd) {
     UIView *tbv = v.superview;
 
     if (!tbv || ![NSStringFromClass(tbv.class) containsString:@"TabBarView"]) return;
-    if (!tbv.superview || ![NSStringFromClass(tbv.superview.class) containsString:@"LMTabBar"]) return;
     if (tbv.bounds.size.width < 300) return;
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [UIView performWithoutAnimation:^{
-            UIView *contentView = nil;
-            for (UIView *sub in tbv.subviews) {
-                if ([sub isMemberOfClass:[UIView class]] && fabs(sub.frame.size.height - 80) < 1.0) {
-                    contentView = sub;
-                    break;
-                }
+    // 极度安全：只隐藏福利 tag 3，不修改坐标，底层会自动重排
+    dispatch_async(dispatch_get_main_queue(), ^{
+        for (UIView *sub in tbv.subviews) {
+            if ([NSStringFromClass(sub.class) containsString:@"TabBarItemView"] && sub.tag == 3) {
+                sub.hidden = YES;
+                sub.alpha = 0;
+                sub.userInteractionEnabled = NO;
             }
-            UIView *container = contentView ? contentView : tbv;
-
-            NSMutableArray *items = [NSMutableArray array];
-            for (UIView *sub in container.subviews) {
-                if ([NSStringFromClass(sub.class) containsString:@"TabBarItemView"]) {
-                    [items addObject:sub];
-                }
-            }
-
-            if (items.count >= 5) {
-                CGFloat slotWidth = tbv.bounds.size.width / 4.0;
-                NSArray *validTags = @[@(0), @(1), @(2), @(4)];
-
-                for (UIView *sub in items) {
-                    if (sub.tag == 3) {
-                        sub.hidden = YES;
-                        sub.alpha = 0;
-                        sub.userInteractionEnabled = NO;
-                        sub.center = CGPointMake(-9999, 30.0);
-                    } else {
-                        NSInteger index = [validTags indexOfObject:@(sub.tag)];
-                        if (index != NSNotFound) {
-                            CGFloat targetCenterX = (slotWidth * index) + (slotWidth / 2.0);
-                            sub.center = CGPointMake(targetCenterX, 30.0); 
-                            sub.bounds = CGRectMake(0, 0, 60, 60); 
-                        }
-                    }
-                }
-            }
-        }];
+        }
     });
 }
 
-// ================= 3. 初始化 Hook =================
+// ================= 4. 初始化 Hook =================
 %ctor {
     // 老版开屏
     Class splashCls = NSClassFromString(@"TMEAdOperateSplash");
@@ -74,6 +56,16 @@ static void my_tbi_layout(id self, SEL _cmd) {
     if (managerCls) {
         Method m = class_getInstanceMethod(managerCls, @selector(hasP0AdSplashCanShow));
         if (m) { orig_hasP0AdSplash = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)my_hasP0AdSplash); }
+    }
+
+    // 新版开屏 (探针头文件里的 Advertisement.SplashAdViewController)
+    Class newSplashCls = NSClassFromString(@"Advertisement.SplashAdViewController");
+    if (newSplashCls) {
+        Method m = class_getInstanceMethod(newSplashCls, @selector(viewDidAppear:));
+        if (m) {
+            orig_splash_viewDidAppear = (void *)method_getImplementation(m);
+            method_setImplementation(m, (IMP)my_splash_viewDidAppear);
+        }
     }
 
     // 底栏
