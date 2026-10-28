@@ -5,12 +5,13 @@
 // 头文件: lazyaudio.MeSignButton : LMGradientButton
 %hook MeSignButton
 
-// 直接在视图初始化或上屏时隐藏
 - (void)didMoveToWindow {
     %orig;
-    self.hidden = YES;
-    self.alpha = 0;
-    self.userInteractionEnabled = NO;
+    // 修复编译错误：强转成 UIView 以获取 hidden/alpha 属性
+    UIView *view = (UIView *)self;
+    view.hidden = YES;
+    view.alpha = 0;
+    view.userInteractionEnabled = NO;
 }
 
 %end
@@ -19,7 +20,6 @@
 // 头文件: lazyaudio.LaunchSplashWindow : UIWindow
 %hook LaunchSplashWindow
 
-// 探针实锤它重写了 hidden 属性，说明底层是用这个方法上屏的
 - (void)setHidden:(BOOL)hidden {
     %orig(YES); // 无论底层传什么，永远保持 YES（隐藏）
 }
@@ -34,23 +34,23 @@
 // 头文件: lazyaudio.TabBarItemView : UIView
 %hook TabBarItemView
 
-// 探针实锤：福利的 tag 为 3
 - (void)didMoveToWindow {
     %orig;
-    if (self.tag == 3) {
-        self.hidden = YES;
-        self.alpha = 0;
-        self.userInteractionEnabled = NO;
+    UIView *view = (UIView *)self;
+    // 探针实锤：福利的 tag 为 3
+    if (view.tag == 3) {
+        view.hidden = YES;
+        view.alpha = 0;
+        view.userInteractionEnabled = NO;
         // 因为你的测试表明，只要隐藏它，底层 Swift 会自动将其余 4 个重排。
         // 所以这里我们直接改 center 把它移出屏幕，防止它占位
-        self.center = CGPointMake(-9999, self.center.y);
+        view.center = CGPointMake(-9999, view.center.y);
     }
 }
 
 %end
 
 // ================= 4. 拦截所有弹窗控制器 =================
-// 头文件里有一大堆 AlertController、Popup，我们直接在 UIViewController 拦截
 %hook UIViewController
 
 - (void)presentViewController:(UIViewController *)viewControllerToPresent animated:(BOOL)flag completion:(void (^)(void))completion {
