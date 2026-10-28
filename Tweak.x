@@ -133,35 +133,35 @@
 }
 %end
 
-%hook UIViewController
-- (void)presentViewController:(UIViewController *)vc
-                     animated:(BOOL)flag
-                   completion:(void (^)(void))completion {
-    if (!vc) {
-        %orig;
-        return;
-    }
-
-    NSString *cls = NSStringFromClass([vc class]);
-
-    NSArray *allow = @[@"Probe", @"FLEX", @"Debug", @"Inspector", @"Console", @"ClassDump", @"Dump"];
-    for (NSString *k in allow) {
-        if ([cls rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) {
-            %orig;
-            return;
-        }
-    }
-    if ([vc isKindOfClass:[UIAlertController class]]) {
-        %orig;
-        return;
-    }
-
-    NSArray *blocked = @[@"Alert", @"Popup", @"Coin", @"Reward"];
-    for (NSString *k in blocked) {
-        if ([cls rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) {
-            return;
-        }
-    }
-    %orig;
-}
-%end
+//%hook UIViewController
+//- (void)presentViewController:(UIViewController *)vc
+//                     animated:(BOOL)flag
+//                   completion:(void (^)(void))completion {
+//    if (!vc) {
+//        %orig;
+//        return;
+//    }
+//
+//    NSString *cls = NSStringFromClass([vc class]);
+//
+//    NSArray *allow = @[@"Probe", @"FLEX", @"Debug", @"Inspector", @"Console", @"ClassDump", @"Dump"];
+//    for (NSString *k in allow) {
+//        if ([cls rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) {
+//            %orig;
+//            return;
+//        }
+//    }
+//    if ([vc isKindOfClass:[UIAlertController class]]) {
+//        %orig;
+//        return;
+//    }
+//
+//    NSArray *blocked = @[@"Alert", @"Popup", @"Coin", @"Reward"];
+//    for (NSString *k in blocked) {
+//        if ([cls rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) {
+//            return;
+//        }
+//    }
+//    %orig;
+//}
+//%end
