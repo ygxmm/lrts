@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 
-// Swift 类在 ObjC Runtime 下的实际类名前置声明
+@interface _TtC9lazyaudio10TabBarView : UIView
+@end
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
 @interface _TtC9lazyaudio12MeSignButton : UIView
@@ -14,7 +15,46 @@
 @interface TGGDTSplashViewController : UIViewController
 @end
 
-// 1. 隐藏底部“福利”Tab：tag == 3，剩余 4 个自动重排
+// ========== 1. 底栏重排：父视图布局后手动修正 4 个可见 item ==========
+%hook _TtC9lazyaudio10TabBarView
+- (void)layoutSubviews {
+    %orig;
+
+    NSMutableArray<UIView *> *visibleItems = [NSMutableArray array];
+    for (UIView *sub in self.subviews) {
+        NSString *cls = NSStringFromClass([sub class]);
+        if ([cls containsString:@"TabBarItemView"]) {
+            if (sub.tag == 3) {
+                sub.hidden = YES;
+                sub.alpha = 0.0;
+                sub.userInteractionEnabled = NO;
+                sub.frame = CGRectZero;
+            } else {
+                [visibleItems addObject:sub];
+            }
+        }
+    }
+
+    NSUInteger count = visibleItems.count;
+    if (count == 0) return;
+
+    CGFloat totalW = self.bounds.size.width;
+    if (totalW <= 0) return;
+
+    UIView *firstItem = visibleItems.firstObject;
+    CGFloat itemY = firstItem.frame.origin.y;
+    CGFloat itemH = firstItem.frame.size.height;
+    if (itemH <= 0) itemH = self.bounds.size.height;
+    CGFloat itemW = totalW / (CGFloat)count;
+
+    for (NSUInteger i = 0; i < count; i++) {
+        UIView *item = visibleItems[i];
+        item.frame = CGRectMake(itemW * (CGFloat)i, itemY, itemW, itemH);
+    }
+}
+%end
+
+// ========== 2. TabBarItemView 兜底 ==========
 %hook _TtC9lazyaudio14TabBarItemView
 - (void)setTag:(NSInteger)tag {
     %orig;
@@ -22,7 +62,7 @@
         self.hidden = YES;
         self.alpha = 0.0;
         self.userInteractionEnabled = NO;
-        self.center = CGPointMake(-9999, self.center.y);
+        [self.superview setNeedsLayout];
     }
 }
 - (void)didMoveToWindow {
@@ -31,12 +71,17 @@
         self.hidden = YES;
         self.alpha = 0.0;
         self.userInteractionEnabled = NO;
-        self.center = CGPointMake(-9999, self.center.y);
     }
+}
+- (void)setFrame:(CGRect)frame {
+    if (self.tag == 3) {
+        frame = CGRectZero;
+    }
+    %orig;
 }
 %end
 
-// 2. 干掉“签到领钱”按钮
+// ========== 3. 签到按钮 ==========
 %hook _TtC9lazyaudio12MeSignButton
 - (void)didMoveToWindow {
     %orig;
@@ -44,13 +89,9 @@
     self.alpha = 0.0;
     self.userInteractionEnabled = NO;
 }
-- (void)setHidden:(BOOL)hidden {
-    hidden = YES;
-    %orig;
-}
 %end
 
-// 3. 拦截 lazyaudio 开屏 Window
+// ========== 4. 开屏 Window 拦截 ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
@@ -62,7 +103,6 @@
 }
 %end
 
-// 4. 拦截 Advertisement.SplashAdWindow
 %hook _TtC13Advertisement14SplashAdWindow
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
@@ -74,7 +114,6 @@
 }
 %end
 
-// 5. 拦截 Advertisement.SplashAdViewController
 %hook _TtC13Advertisement22SplashAdViewController
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
@@ -83,7 +122,6 @@
 }
 %end
 
-// 6. 拦截广点通开屏控制器
 %hook TGGDTSplashViewController
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
@@ -92,7 +130,7 @@
 }
 %end
 
-// 7. 拦截 Alert / Popup / Coin / Reward 类弹窗
+// ========== 5. 弹窗拦截 ==========
 %hook UIViewController
 - (void)presentViewController:(UIViewController *)viewControllerToPresent
                      animated:(BOOL)flag
