@@ -3,8 +3,6 @@
 
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
-@interface _TtC9lazyaudio12MeSignButton : UIView
-@end
 @interface _TtC9lazyaudio18LaunchSplashWindow : UIWindow
 @end
 @interface _TtC13Advertisement22SplashAdViewController : UIViewController
@@ -28,7 +26,7 @@ __attribute__((constructor)) static void LAInit(void) {
     NSLog(@"[LazyAudio] tweak loaded");
 }
 
-// ========== 1. 底栏重排：隐藏 tag==3，剩余 4 个均分 ==========
+// ========== 1. 底栏重排 ==========
 %hook UIView
 - (void)layoutSubviews {
     %orig;
@@ -85,7 +83,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 2. TabBarItemView 兜底隐藏 tag==3 ==========
+// ========== 2. TabBarItemView 兜底 ==========
 %hook _TtC9lazyaudio14TabBarItemView
 - (void)setTag:(NSInteger)tag {
     %orig;
@@ -105,17 +103,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 3. 签到领钱按钮 ==========
-%hook _TtC9lazyaudio12MeSignButton
-- (void)didMoveToWindow {
-    %orig;
-    self.hidden = YES;
-    self.alpha = 0.0;
-    self.userInteractionEnabled = NO;
-}
-%end
-
-// ========== 4. 开屏 Window ==========
+// ========== 3. 开屏 Window ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
@@ -138,7 +126,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 5. 开屏 VC ==========
+// ========== 4. 开屏 VC ==========
 %hook _TtC13Advertisement22SplashAdViewController
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
