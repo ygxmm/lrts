@@ -2,14 +2,17 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-// 日志写入函数
+// 日志写入函数 (改为写入 App 自己的沙盒)
 static void writeLog(NSString *format, ...) {
     va_list args;
     va_start(args, format);
     NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
     
-    NSString *path = @"/var/mobile/Documents/lazyaudio_probe.txt";
+    // App 沙盒的临时目录，绝对有写权限
+    NSString *dir = NSTemporaryDirectory();
+    NSString *path = [dir stringByAppendingPathComponent:@"lazyaudio_probe.txt"];
+    
     NSString *timestamp = [NSDateFormatter localizedStringFromDate:[NSDate date] dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterMediumStyle];
     NSString *logLine = [NSString stringWithFormat:@"[%@] %@\n", timestamp, msg];
     
@@ -30,8 +33,10 @@ static void dumpView(UIView *view, int depth) {
     NSString *indent = [@"" stringByPaddingToLength:depth * 2 withString:@" " startingAtIndex:0];
     NSString *clsName = NSStringFromClass([view class]);
     
-    // 只记录关键信息：类名、tag、hidden、frame
     writeLog(@"%@-> %@ | tag:%ld | hidden:%d | frame:%@", indent, clsName, (long)view.tag, view.hidden, NSStringFromCGRect(view.frame));
+    
+    // 限制深度，防止日志太大
+    if (depth > 10) return;
     
     for (UIView *sub in view.subviews) {
         dumpView(sub, depth + 1);
@@ -64,9 +69,8 @@ static void startProbe() {
 }
 
 %ctor {
-    // 延迟 3 秒启动，等待 App 和广告加载
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        writeLog(@"\n\n🎉 Tweak 探针已启动！");
+        writeLog(@"\n\n🎉 Tweak 探针已启动！(沙盒版)");
         startProbe();
     });
 }
