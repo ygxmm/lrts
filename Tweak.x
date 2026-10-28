@@ -13,10 +13,6 @@
 @interface TGGDTSplashViewController : UIViewController
 @end
 
-static BOOL IsTabBarItemView(UIView *v) {
-    NSString *cls = NSStringFromClass([v class]);
-    return [cls containsString:@"TabBarItemView"] && ![cls containsString:@"Player"];
-}
 
 //%hook UIView
 //- (void)layoutSubviews {
