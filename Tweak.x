@@ -1,10 +1,11 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
-// ================= 1. 斩首签到按钮 (基于 MeSignButton.h) =================
+// ================= 1. 干掉签到按钮 =================
+// 头文件: lazyaudio.MeSignButton : LMGradientButton
 %hook MeSignButton
 
-// 无论它是 initWithFrame 还是 didMoveToWindow，只要它想上屏，我们就隐藏
+// 直接在视图初始化或上屏时隐藏
 - (void)didMoveToWindow {
     %orig;
     self.hidden = YES;
@@ -14,71 +15,56 @@
 
 %end
 
-// ================= 2. 干掉开屏广告 (基于 LaunchSplashWindow / TGGDTSplashViewController.h) =================
-// 原生开屏 Window，拒绝上屏
+// ================= 2. 干掉开屏 Window =================
+// 头文件: lazyaudio.LaunchSplashWindow : UIWindow
 %hook LaunchSplashWindow
-- (void)makeKeyAndVisible {
-    // 拦截，不给上屏
+
+// 探针实锤它重写了 hidden 属性，说明底层是用这个方法上屏的
+- (void)setHidden:(BOOL)hidden {
+    %orig(YES); // 无论底层传什么，永远保持 YES（隐藏）
 }
+
+- (void)setAlpha:(CGFloat)alpha {
+    %orig(0); // 连透明度都锁死为 0
+}
+
 %end
 
-// 广点通开屏 VC，一出现就隐身
-%hook TGGDTSplashViewController
-- (void)viewDidAppear:(BOOL)animated {
-    %orig;
-    self.view.hidden = YES;
-    self.view.alpha = 0;
-}
-%end
-
-// ================= 3. 底栏福利隐藏 (基于 TabBarItemView.h) =================
+// ================= 3. 干掉底栏福利并触发重排 =================
+// 头文件: lazyaudio.TabBarItemView : UIView
 %hook TabBarItemView
-- (void)layoutSubviews {
+
+// 探针实锤：福利的 tag 为 3
+- (void)didMoveToWindow {
     %orig;
-    // 探针实锤，福利的 tag 为 3
     if (self.tag == 3) {
         self.hidden = YES;
         self.alpha = 0;
         self.userInteractionEnabled = NO;
+        // 因为你的测试表明，只要隐藏它，底层 Swift 会自动将其余 4 个重排。
+        // 所以这里我们直接改 center 把它移出屏幕，防止它占位
+        self.center = CGPointMake(-9999, self.center.y);
     }
 }
+
 %end
 
-// ================= 4. 赚钱悬浮球隐藏 (基于 EarningTask 系列头文件) =================
-%hook EarningTaskBallView
-- (void)didMoveToWindow {
-    %orig;
-    self.hidden = YES;
-}
-%end
-
-%hook OnlineEarningNewEntryView
-- (void)updateStateWithIsEnforce:(BOOL)enforce {
-    %orig;
-    self.hidden = YES;
-}
-%end
-
-// ================= 5. 拦腰斩断弹窗调度中心 (最核心) =================
-// 由于头文件里有一大堆 AlertDispatcher 系列（Service, API, Model），
-// 我们直接在最底层的 UIViewController 层面，拦截所有可能带有弹窗意义的弹窗
+// ================= 4. 拦截所有弹窗控制器 =================
+// 头文件里有一大堆 AlertController、Popup，我们直接在 UIViewController 拦截
 %hook UIViewController
+
 - (void)presentViewController:(UIViewController *)viewControllerToPresent animated:(BOOL)flag completion:(void (^)(void))completion {
     NSString *clsName = NSStringFromClass([viewControllerToPresent class]);
     
-    // 只要类名带这些字眼，直接拒绝弹出，连动画都不给
-    if ([clsName containsString:@"AlertDispatcher"] ||
-        [clsName containsString:@"CouponAlert"] ||
+    // 基于头文件：CouponAlert, ServerAlert, LMAwardAlert 等，通杀
+    if ([clsName containsString:@"Alert"] || 
+        [clsName containsString:@"Popup"] || 
         [clsName containsString:@"Coin"] ||
-        [clsName containsString:@"Earn"] ||
-        [clsName containsString:@"Sign"] ||
-        [clsName containsString:@"Reward"] ||
-        [clsName containsString:@"Popup"]) {
-        
-        NSLog(@"[Tweak] 成功拦截恶心弹窗: %@", clsName);
-        return; 
+        [clsName containsString:@"Reward"]) {
+        NSLog(@"[Tweak] 成功拦截弹窗: %@", clsName);
+        return; // 直接拦截，不让它弹
     }
-    
     %orig;
 }
+
 %end
