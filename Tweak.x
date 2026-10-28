@@ -23,7 +23,7 @@ static void LALog(NSString *fmt, ...) {
     va_start(args, fmt);
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
     va_end(args);
-    LALog(@"%@", msg);
+    NSLog(@"[LazyAudio] %@", msg);
     NSString *dir = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
     if (!dir.length) return;
     NSString *path = [dir stringByAppendingPathComponent:@"lazyaudio-tweak.log"];
