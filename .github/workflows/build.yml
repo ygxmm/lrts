@@ -14,16 +14,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang lldb build-essential fakeroot libssl-dev libcurl4-openssl-dev libxml2-dev libncurses5-dev libpng-dev git make xz-utils libplist-dev wget
-          # 下载并安装 Linux 版的 ldid
           wget https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 -O ldid
           chmod +x ldid
           sudo mv ldid /usr/local/bin/ldid
 
-      - name: Setup Theos
+      - name: Setup Theos and iOS SDK
         run: |
+          # 克隆 roothide 版本的 Theos
           export THEOS=$HOME/theos
           git clone --recursive --depth 1 https://github.com/roothide/theos.git $THEOS
           echo "THEOS=$THEOS" >> $GITHUB_ENV
+          
+          # 克隆并安装 iOS SDK
+          git clone --depth 1 https://github.com/theos/sdks.git $HOME/sdks
+          mkdir -p $THEOS/sdks
+          mv $HOME/sdks/iPhoneOS*.sdk $THEOS/sdks/
+          rm -rf $HOME/sdks
 
       - name: Build
         run: |
