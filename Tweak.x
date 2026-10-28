@@ -1,9 +1,5 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
-#import <string.h>
-#import <stdarg.h>
-
-static void LALog(NSString *fmt, ...);
 
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
@@ -18,71 +14,8 @@ static void LALog(NSString *fmt, ...);
 @interface TGGDTSplashViewController : UIViewController
 @end
 
-static void LALog(NSString *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
-    va_end(args);
-    NSLog(@"[LazyAudio] %@", msg);
-    NSString *dir = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-    if (!dir.length) return;
-    NSString *path = [dir stringByAppendingPathComponent:@"lazyaudio-tweak.log"];
-    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], msg];
-    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
-    if (!fh) {
-        [line writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    } else {
-        [fh seekToEndOfFile];
-        [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
-        [fh closeFile];
-    }
-}
-
-static BOOL gEnableTabBar = YES;
-static BOOL gEnableSignButton = YES;
-static BOOL gEnableSplash = YES;
-static BOOL gEnablePopup = YES;
-
 static Class gTabItemClass = Nil;
 static char kLAIgnoredKey;
-
-static NSDictionary *LALoadSwitches(void) {
-    NSMutableArray<NSString *> *paths = [NSMutableArray array];
-
-    NSString *home = NSHomeDirectory();
-    if (home.length > 0) {
-        [paths addObject:[home stringByAppendingPathComponent:@"Documents/switches.plist"]];
-    }
-    NSString *group = @"/var/mobile/Containers/Shared/AppGroup/C1A22E1E-A0E8-4602-B053-AFDDB8B982E0/Documents/switches.plist";
-    [paths addObject:group];
-    [paths addObject:@"/var/mobile/dyyy/lazyaudio-nosplash/switches.plist"];
-    [paths addObject:@"/var/jb/var/mobile/dyyy/lazyaudio-nosplash/switches.plist"];
-
-    for (NSString *p in paths) {
-        NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:p];
-        if (d) {
-            LALog(@"读取开关成功: %@", p);
-            return d;
-        }
-    }
-    LALog(@"未找到 switches.plist，尝试过: %@", paths);
-    return nil;
-}
-
-__attribute__((constructor)) static void LAInitSwitches(void) {
-    LALog(@"tweak loaded, home=%@", NSHomeDirectory());
-    NSDictionary *d = LALoadSwitches();
-    if (!d) {
-        LALog(@"全部功能默认开启");
-        return;
-    }
-    gEnableTabBar     = d[@"tabbar"]     ? [d[@"tabbar"] boolValue]     : YES;
-    gEnableSignButton = d[@"signbutton"] ? [d[@"signbutton"] boolValue] : YES;
-    gEnableSplash     = d[@"splash"]     ? [d[@"splash"] boolValue]     : YES;
-    gEnablePopup      = d[@"popup"]      ? [d[@"popup"] boolValue]      : YES;
-    LALog(@"开关 tabbar=%d sign=%d splash=%d popup=%d",
-          gEnableTabBar, gEnableSignButton, gEnableSplash, gEnablePopup);
-}
 
 static BOOL LAIsTabItem(UIView *v) {
     if (!gTabItemClass) {
@@ -91,14 +24,15 @@ static BOOL LAIsTabItem(UIView *v) {
     return gTabItemClass && [v class] == gTabItemClass;
 }
 
-// ========== 1. 底栏重排（开关 tabbar）==========
+__attribute__((constructor)) static void LAInit(void) {
+    NSLog(@"[LazyAudio] tweak loaded");
+}
+
+// ========== 1. 底栏重排：隐藏 tag==3，剩余 4 个均分 ==========
 %hook UIView
 - (void)layoutSubviews {
     %orig;
 
-    if (!gEnableTabBar) {
-        return;
-    }
     if (objc_getAssociatedObject(self, &kLAIgnoredKey)) {
         return;
     }
@@ -151,13 +85,10 @@ static BOOL LAIsTabItem(UIView *v) {
 }
 %end
 
-// ========== 2. TabBarItemView 隐藏 tag==3（开关 tabbar）==========
+// ========== 2. TabBarItemView 兜底隐藏 tag==3 ==========
 %hook _TtC9lazyaudio14TabBarItemView
 - (void)setTag:(NSInteger)tag {
     %orig;
-    if (!gEnableTabBar) {
-        return;
-    }
     if (self.tag == 3) {
         self.hidden = YES;
         self.alpha = 0.0;
@@ -166,9 +97,6 @@ static BOOL LAIsTabItem(UIView *v) {
 }
 - (void)didMoveToWindow {
     %orig;
-    if (!gEnableTabBar) {
-        return;
-    }
     if (self.tag == 3) {
         self.hidden = YES;
         self.alpha = 0.0;
@@ -177,56 +105,43 @@ static BOOL LAIsTabItem(UIView *v) {
 }
 %end
 
-// ========== 3. 签到按钮（开关 signbutton）==========
+// ========== 3. 签到领钱按钮 ==========
 %hook _TtC9lazyaudio12MeSignButton
 - (void)didMoveToWindow {
     %orig;
-    if (!gEnableSignButton) {
-        return;
-    }
     self.hidden = YES;
     self.alpha = 0.0;
     self.userInteractionEnabled = NO;
 }
 %end
 
-// ========== 4. 开屏 Window / VC（开关 splash）==========
+// ========== 4. 开屏 Window ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden {
-    if (gEnableSplash) {
-        hidden = YES;
-    }
+    hidden = YES;
     %orig;
 }
 - (void)makeKeyAndVisible {
     %orig;
-    if (gEnableSplash) {
-        self.hidden = YES;
-    }
+    self.hidden = YES;
 }
 %end
 
 %hook _TtC13Advertisement14SplashAdWindow
 - (void)setHidden:(BOOL)hidden {
-    if (gEnableSplash) {
-        hidden = YES;
-    }
+    hidden = YES;
     %orig;
 }
 - (void)makeKeyAndVisible {
     %orig;
-    if (gEnableSplash) {
-        self.hidden = YES;
-    }
+    self.hidden = YES;
 }
 %end
 
+// ========== 5. 开屏 VC ==========
 %hook _TtC13Advertisement22SplashAdViewController
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
-    if (!gEnableSplash) {
-        return;
-    }
     self.view.hidden = YES;
     [self dismissViewControllerAnimated:NO completion:nil];
 }
@@ -235,50 +150,7 @@ static BOOL LAIsTabItem(UIView *v) {
 %hook TGGDTSplashViewController
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
-    if (!gEnableSplash) {
-        return;
-    }
     self.view.hidden = YES;
     [self dismissViewControllerAnimated:NO completion:nil];
-}
-%end
-
-// ========== 5. 弹窗拦截（开关 popup）==========
-%hook UIViewController
-- (void)presentViewController:(UIViewController *)vc
-                     animated:(BOOL)flag
-                   completion:(void (^)(void))completion {
-    if (!gEnablePopup || !vc) {
-        %orig;
-        return;
-    }
-
-    if ([vc isKindOfClass:[UIAlertController class]]) {
-        %orig;
-        return;
-    }
-
-    const char *name = class_getName([vc class]);
-
-    static const char *allowWords[] = {"Probe", "FLEX", "Debug", "Inspector", "Console", "ClassDump", "Dump", NULL};
-    for (int i = 0; allowWords[i]; i++) {
-        if (strcasestr(name, allowWords[i])) {
-            %orig;
-            return;
-        }
-    }
-
-    static const char *blockWords[] = {"Alert", "Popup", "Coin", "Reward", NULL};
-    for (int i = 0; blockWords[i]; i++) {
-        if (strcasestr(name, blockWords[i])) {
-            LALog(@"拦截弹窗: %s", name);
-            if (completion) {
-                dispatch_async(dispatch_get_main_queue(), completion);
-            }
-            return;
-        }
-    }
-
-    %orig;
 }
 %end
