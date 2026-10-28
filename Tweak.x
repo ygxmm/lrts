@@ -41,18 +41,14 @@ static void my_prepare_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-// ================= 3. 基于头文件的精准猎杀 =================
-
-// 3.1 拦截 EarningTaskEntryView 的显示请求
-// 头文件: - (void)refreshWithIsVisible:(BOOL)arg2;
+// ================= 3. 赚钱/签到挂件与悬浮球拦截 =================
+// 3.1 拦截 EarningTaskEntryView 的显示刷新
 static void (*orig_refreshWithIsVisible)(id, SEL, BOOL) = NULL;
 static void my_refreshWithIsVisible(id self, SEL _cmd, BOOL isVisible) {
-    // 不管它传什么，我们强行传 NO，让它永远不显示
-    if (orig_refreshWithIsVisible) orig_refreshWithIsVisible(self, _cmd, NO);
+    if (orig_refreshWithIsVisible) orig_refreshWithIsVisible(self, _cmd, NO); // 强制传 NO
 }
 
 // 3.2 拦截 EarningTaskBallView 的生命周期
-// 只要悬浮球想上屏幕，直接干掉
 static void (*orig_ball_didMove)(id, SEL) = NULL;
 static void my_ball_didMove(id self, SEL _cmd) {
     if (orig_ball_didMove) orig_ball_didMove(self, _cmd);
@@ -62,18 +58,47 @@ static void my_ball_didMove(id self, SEL _cmd) {
     v.userInteractionEnabled = NO;
 }
 
-// 3.3 针对 OnlineEarningNewEntryView (它是 OnlineEarningEntryView 的子类)
-// 头文件有 - (void)updateStateWithIsEnforce:(BOOL)arg2;
-// 我们直接 Hook 它的 init 或者 didMoveToWindow 来隐藏
-static void (*orig_online_didMove)(id, SEL) = NULL;
-static void my_online_didMove(id self, SEL _cmd) {
-    if (orig_online_didMove) orig_online_didMove(self, _cmd);
-    UIView *v = (UIView *)self;
-    v.hidden = YES;
-    v.alpha = 0;
+// 3.3 拦截 OnlineEarningDrawer 单例拉出抽屉
+static id (*orig_drawer_shared)(id, SEL) = NULL;
+static id my_drawer_shared(id self, SEL _cmd) {
+    id instance = orig_drawer_shared(self, _cmd);
+    if (instance) {
+        [instance performSelector:@selector(close) withObject:nil];
+    }
+    return instance;
 }
 
-// ================= 4. 底栏福利隐藏 + 完美 4 等分 =================
+// ================= 4. 全局弹窗拦截 (基于分类 PopDialogView) =================
+static void (*orig_lmr_showPopDialog)(id, SEL) = NULL;
+static void my_lmr_showPopDialog(id self, SEL _cmd) {
+    NSString *clsName = NSStringFromClass([self class]);
+    
+    // 拦截包含 Reward, Sign, Task, Coin, PremiumFreeListen 的弹窗
+    NSArray *junkKeywords = @[@"Reward", @"Sign", @"Task", @"Coin", @"Gold", @"PremiumFreeListen"];
+    BOOL isJunk = NO;
+    for (NSString *kw in junkKeywords) {
+        if ([clsName localizedCaseInsensitiveContainsString:kw]) {
+            isJunk = YES;
+            break;
+        }
+    }
+    
+    if (isJunk) {
+        NSLog(@"[Tweak] 成功拦截弹窗 VC: %@", clsName);
+        // 如果它自身响应隐藏方法，直接隐藏；否则不调用原方法即可
+        if ([self respondsToSelector:@selector(lmr_hidePopDialogView:)]) {
+            #pragma clang diagnostic push
+            #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            [self performSelector:@selector(lmr_hidePopDialogView:) withObject:nil];
+            #pragma clang diagnostic pop
+        }
+        return;
+    }
+    
+    if (orig_lmr_showPopDialog) orig_lmr_showPopDialog(self, _cmd);
+}
+
+// ================= 5. 底栏福利隐藏 + 完美 4 等分 =================
 static void (*orig_tbi_layout)(id, SEL) = NULL;
 static void my_tbi_layout(id self, SEL _cmd) {
     if (orig_tbi_layout) orig_tbi_layout(self, _cmd);
@@ -119,9 +144,9 @@ static void my_tbi_layout(id self, SEL _cmd) {
     });
 }
 
-// ================= 5. 初始化 Hook =================
+// ================= 6. 初始化 Hook =================
 %ctor {
-    // 老开屏
+    // 1. 老版开屏
     Class splashCls = NSClassFromString(@"TMEAdOperateSplash");
     if (splashCls) {
         Method m = class_getClassMethod(splashCls, @selector(needShowSplashWithLaunchType:));
@@ -133,7 +158,7 @@ static void my_tbi_layout(id self, SEL _cmd) {
         if (m) { orig_hasP0AdSplash = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)my_hasP0AdSplash); }
     }
 
-    // 新开屏
+    // 2. 新版开屏
     Class prepareCls = NSClassFromString(@"lazyaudio.AppPrepareController");
     if (prepareCls) {
         Method mVisible = class_getInstanceMethod(prepareCls, @selector(isSplashVisible));
@@ -148,8 +173,7 @@ static void my_tbi_layout(id self, SEL _cmd) {
         }
     }
 
-    // 🌟 3. 基于头文件精准猎杀
-    // 3.1 EarningTaskEntryView 的 refreshWithIsVisible
+    // 3. 赚钱组件拦截
     Class entryCls = NSClassFromString(@"lazyaudio.EarningTaskEntryView");
     if (entryCls) {
         Method m = class_getInstanceMethod(entryCls, @selector(refreshWithIsVisible:));
@@ -158,8 +182,6 @@ static void my_tbi_layout(id self, SEL _cmd) {
             method_setImplementation(m, (IMP)my_refreshWithIsVisible);
         }
     }
-
-    // 3.2 EarningTaskBallView 的 didMoveToWindow
     Class ballCls = NSClassFromString(@"lazyaudio.EarningTaskBallView");
     if (ballCls) {
         Method m = class_getInstanceMethod(ballCls, @selector(didMoveToWindow));
@@ -168,18 +190,24 @@ static void my_tbi_layout(id self, SEL _cmd) {
             method_setImplementation(m, (IMP)my_ball_didMove);
         }
     }
-
-    // 3.3 OnlineEarningNewEntryView 的 didMoveToWindow
-    Class onlineCls = NSClassFromString(@"lazyaudio.OnlineEarningNewEntryView");
-    if (onlineCls) {
-        Method m = class_getInstanceMethod(onlineCls, @selector(didMoveToWindow));
+    Class drawerCls = NSClassFromString(@"lazyaudio.OnlineEarningDrawer");
+    if (drawerCls) {
+        Method m = class_getClassMethod(drawerCls, @selector(shared));
         if (m) {
-            orig_online_didMove = (void *)method_getImplementation(m);
-            method_setImplementation(m, (IMP)my_online_didMove);
+            orig_drawer_shared = (void *)method_getImplementation(m);
+            method_setImplementation(m, (IMP)my_drawer_shared);
         }
     }
 
-    // 底栏
+    // 4. 弹窗拦截 (PopDialogView 分类方法)
+    Class vcCls = [UIViewController class];
+    Method mPop = class_getInstanceMethod(vcCls, @selector(lmr_showPopDialogView));
+    if (mPop) {
+        orig_lmr_showPopDialog = (void *)method_getImplementation(mPop);
+        method_setImplementation(mPop, (IMP)my_lmr_showPopDialog);
+    }
+
+    // 5. 底栏
     Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
     if (tbi) {
         Method m = class_getInstanceMethod(tbi, @selector(layoutSubviews));
