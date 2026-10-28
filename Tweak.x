@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
 
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
