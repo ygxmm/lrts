@@ -2,75 +2,71 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-// ================= 1. 彻底干碎广点通开屏控制器 =================
-// 探针实锤类名：TGGDTSplashViewController
-static void (*orig_gdt_viewDidAppear)(id, SEL, BOOL) = NULL;
-static void my_gdt_viewDidAppear(id self, SEL _cmd, BOOL animated) {
-    if (orig_gdt_viewDidAppear) orig_gdt_viewDidAppear(self, _cmd, animated);
-    // 只要它出现，直接把它的视图干掉
-    UIViewController *vc = (UIViewController *)self;
-    vc.view.hidden = YES;
-    vc.view.alpha = 0;
-}
-
-// ================= 2. 干掉开屏专用 Window =================
-// 探针实锤类名：Advertisement.SplashAdWindow
-static void (*orig_win_setHidden)(id, SEL, BOOL) = NULL;
-static void my_win_setHidden(id self, SEL _cmd, BOOL hidden) {
-    if (orig_win_setHidden) orig_win_setHidden(self, _cmd, YES); // 永远强制隐藏
-}
-
-static void (*orig_win_makeKey)(id, SEL) = NULL;
-static void my_win_makeKey(id self, SEL _cmd) {
-    // 拦截一切上屏请求，什么都不做
-}
-
-// ================= 3. 完美底栏：只隐藏 tag 3 =================
-static void (*orig_tbi_didMove)(id, SEL) = NULL;
-static void my_tbi_didMove(id self, SEL _cmd) {
-    if (orig_tbi_didMove) orig_tbi_didMove(self, _cmd);
-    UIView *v = (UIView *)self;
-    if (v.tag == 3) {
-        v.hidden = YES;
-        v.alpha = 0;
-        v.userInteractionEnabled = NO;
+// 日志写入函数
+static void writeLog(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    
+    NSString *path = @"/var/mobile/Documents/lazyaudio_probe.txt";
+    NSString *timestamp = [NSDateFormatter localizedStringFromDate:[NSDate date] dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterMediumStyle];
+    NSString *logLine = [NSString stringWithFormat:@"[%@] %@\n", timestamp, msg];
+    
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm fileExistsAtPath:path]) {
+        [logLine writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    } else {
+        NSFileHandle *fileHandle = [NSFileHandle fileHandleForWritingAtPath:path];
+        [fileHandle seekToEndOfFile];
+        [fileHandle writeData:[logLine dataUsingEncoding:NSUTF8StringEncoding]];
+        [fileHandle closeFile];
     }
 }
 
-// ================= 4. 初始化 Hook =================
+// 递归遍历视图树
+static void dumpView(UIView *view, int depth) {
+    if (!view) return;
+    NSString *indent = [@"" stringByPaddingToLength:depth * 2 withString:@" " startingAtIndex:0];
+    NSString *clsName = NSStringFromClass([view class]);
+    
+    // 只记录关键信息：类名、tag、hidden、frame
+    writeLog(@"%@-> %@ | tag:%ld | hidden:%d | frame:%@", indent, clsName, (long)view.tag, view.hidden, NSStringFromCGRect(view.frame));
+    
+    for (UIView *sub in view.subviews) {
+        dumpView(sub, depth + 1);
+    }
+}
+
+// 定时扫描器
+static void startProbe() {
+    [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer * _Nonnull timer) {
+        writeLog(@"\n================ 开始扫描 ================");
+        NSArray *windows = [UIApplication sharedApplication].windows;
+        for (UIWindow *win in windows) {
+            writeLog(@"找到 Window: %@ | level:%f | hidden:%d", NSStringFromClass([win class]), win.windowLevel, win.hidden);
+            
+            // 如果是广告窗口或者层级很高的窗口，深度打印
+            if ([NSStringFromClass([win class]) containsString:@"Splash"] || win.windowLevel > 0) {
+                dumpView(win, 1);
+            }
+            
+            // 找底栏
+            for (UIView *sub in win.subviews) {
+                if ([NSStringFromClass([sub class]) containsString:@"LMTabBar"] || [NSStringFromClass([sub class]) containsString:@"TabBarView"]) {
+                    writeLog(@"--- 发现底栏 ---");
+                    dumpView(sub, 1);
+                }
+            }
+        }
+        writeLog(@"================ 扫描结束 ================\n");
+    }];
+}
+
 %ctor {
-    // 1. Hook 广点通开屏 VC
-    Class gdtVC = NSClassFromString(@"TGGDTSplashViewController");
-    if (gdtVC) {
-        Method m = class_getInstanceMethod(gdtVC, @selector(viewDidAppear:));
-        if (m) {
-            orig_gdt_viewDidAppear = (void *)method_getImplementation(m);
-            method_setImplementation(m, (IMP)my_gdt_viewDidAppear);
-        }
-    }
-
-    // 2. Hook 开屏专用 Window
-    Class splashWin = NSClassFromString(@"Advertisement.SplashAdWindow");
-    if (splashWin) {
-        Method mHidden = class_getInstanceMethod(splashWin, @selector(setHidden:));
-        if (mHidden) {
-            orig_win_setHidden = (void *)method_getImplementation(mHidden);
-            method_setImplementation(mHidden, (IMP)my_win_setHidden);
-        }
-        Method mKey = class_getInstanceMethod(splashWin, @selector(makeKeyAndVisible));
-        if (mKey) {
-            orig_win_makeKey = (void *)method_getImplementation(mKey);
-            method_setImplementation(mKey, (IMP)my_win_makeKey);
-        }
-    }
-
-    // 3. Hook 底栏 Item
-    Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
-    if (tbi) {
-        Method m = class_getInstanceMethod(tbi, @selector(didMoveToWindow));
-        if (m) {
-            orig_tbi_didMove = (void *)method_getImplementation(m);
-            method_setImplementation(m, (IMP)my_tbi_didMove);
-        }
-    }
+    // 延迟 3 秒启动，等待 App 和广告加载
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        writeLog(@"\n\n🎉 Tweak 探针已启动！");
+        startProbe();
+    });
 }
