@@ -9,30 +9,47 @@ static BOOL my_needShowSplash(id self, SEL _cmd, NSInteger type) { return NO; }
 static BOOL (*orig_hasP0AdSplash)(id, SEL) = NULL;
 static BOOL my_hasP0AdSplash(id self, SEL _cmd) { return NO; }
 
-// ================= 2. 干掉新版 Swift 图片开屏 =================
-// 拦截 Swift 的 SplashAdViewController 的 viewDidLoad，直接隐藏它的视图
-static void (*orig_splash_viewDidLoad)(id, SEL) = NULL;
-static void my_splash_viewDidLoad(id self, SEL _cmd) {
-    if (orig_splash_viewDidLoad) orig_splash_viewDidLoad(self, _cmd);
-    UIViewController *vc = (UIViewController *)self;
-    vc.view.hidden = YES;
-    vc.view.alpha = 0;
+// ================= 2. 干掉新版 Swift 图片开屏 (Window 拦截) =================
+static void (*orig_makeKeyAndVisible)(id, SEL) = NULL;
+static void my_makeKeyAndVisible(id self, SEL _cmd) {
+    UIWindow *win = (UIWindow *)self;
+    NSString *clsName = NSStringFromClass([win class]);
+    if ([clsName containsString:@"SplashAdWindow"] || [clsName containsString:@"AdWindow"]) {
+        return; // 如果是广告 Window，直接掐死，不给显示
+    }
+    if (orig_makeKeyAndVisible) orig_makeKeyAndVisible(self, _cmd);
 }
 
-// ================= 3. 干掉所有“赚钱/领金币”相关弹窗和悬浮球 =================
-%hook UIView
-- (void)didMoveToWindow {
-    %orig;
-    // 获取当前视图的类名
-    NSString *clsName = NSStringFromClass([self class]);
-    // 只要类名里包含 Earning（赚钱），直接瞎眼隐藏
-    if ([clsName containsString:@"Earning"] || [clsName containsString:@"OnlineEarning"] || [clsName containsString:@"Levitator"]) {
-        self.hidden = YES;
-        self.alpha = 0;
-        self.userInteractionEnabled = NO;
+// ================= 3. 定时清扫金币/赚钱弹窗 =================
+// 先声明，防止 C 语言报错
+static void removeEarningViews(UIView *view);
+
+static void startCleaner() {
+    [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer * _Nonnull timer) {
+        for (UIWindow *window in [UIApplication sharedApplication].windows) {
+            removeEarningViews(window); // 纯 C 调用
+        }
+    }];
+}
+
+static void removeEarningViews(UIView *view) {
+    if (!view) return;
+    NSString *clsName = NSStringFromClass([view class]);
+    
+    if ([clsName containsString:@"Earning"] || 
+        [clsName containsString:@"Levitator"] || 
+        [clsName containsString:@"OnlineEarning"] ||
+        [clsName containsString:@"GoldCoin"]) {
+        
+        view.hidden = YES;
+        view.alpha = 0;
+        view.userInteractionEnabled = NO;
+    }
+    
+    for (UIView *sub in view.subviews) {
+        removeEarningViews(sub);
     }
 }
-%end
 
 // ================= 4. 底栏福利隐藏 + 完美 4 等分 =================
 static void (*orig_tbi_layout)(id, SEL) = NULL;
@@ -90,7 +107,7 @@ static void my_tbi_layout(id self, SEL _cmd) {
 
 // ================= 5. 初始化 Hook =================
 %ctor {
-    // 挂老开屏
+    // 1. 老开屏
     Class splashCls = NSClassFromString(@"TMEAdOperateSplash");
     if (splashCls) {
         Method m = class_getClassMethod(splashCls, @selector(needShowSplashWithLaunchType:));
@@ -102,14 +119,19 @@ static void my_tbi_layout(id self, SEL _cmd) {
         if (m) { orig_hasP0AdSplash = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)my_hasP0AdSplash); }
     }
 
-    // 挂新 Swift 开屏 (SplashAdViewController)
-    Class newSplashVC = NSClassFromString(@"Advertisement.SplashAdViewController");
-    if (newSplashVC) {
-        Method m = class_getInstanceMethod(newSplashVC, @selector(viewDidLoad));
-        if (m) { orig_splash_viewDidLoad = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)my_splash_viewDidLoad); }
+    // 2. 新开屏 Window 拦截
+    Method mkWindow = class_getInstanceMethod([UIWindow class], @selector(makeKeyAndVisible));
+    if (mkWindow) {
+        orig_makeKeyAndVisible = (void *)method_getImplementation(mkWindow);
+        method_setImplementation(mkWindow, (IMP)my_makeKeyAndVisible);
     }
 
-    // 挂底栏
+    // 3. 启动弹窗清扫器
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        startCleaner();
+    });
+
+    // 4. 底栏
     Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
     if (tbi) {
         Method m = class_getInstanceMethod(tbi, @selector(layoutSubviews));
