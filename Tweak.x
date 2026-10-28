@@ -9,13 +9,16 @@ static BOOL my_needShowSplash(id self, SEL _cmd, NSInteger type) { return NO; }
 static BOOL (*orig_hasP0AdSplash)(id, SEL) = NULL;
 static BOOL my_hasP0AdSplash(id self, SEL _cmd) { return NO; }
 
-// ================= 2. 根据头文件精准干掉开屏 (AppPrepareController) =================
-// 拦截 viewDidAppear，直接把 launchView 干掉
+// ================= 2. 精准干掉新开屏 (修复闪退核心) =================
 static void (*orig_prepare_viewDidAppear)(id, SEL, BOOL) = NULL;
 static void my_prepare_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     if (orig_prepare_viewDidAppear) orig_prepare_viewDidAppear(self, _cmd, animated);
     
-    // 利用 KVC 取出探针里提到的 launchView，直接隐藏
+    // 【修复闪退】必须严格匹配类名，防止 UINavigationController 等系统类进来 KVC 报错
+    if (![NSStringFromClass([self class]) isEqualToString:@"lazyaudio.AppPrepareController"]) {
+        return;
+    }
+
     UIView *launchView = [self valueForKey:@"launchView"];
     if (launchView) {
         launchView.hidden = YES;
@@ -23,38 +26,30 @@ static void my_prepare_viewDidAppear(id self, SEL _cmd, BOOL animated) {
         [launchView removeFromSuperview];
     }
     
-    // 再拦截 isSplashVisible 强制返回 NO
     if ([self respondsToSelector:@selector(setIsSplashVisible:)]) {
         [self setValue:@(NO) forKey:@"isSplashVisible"];
     }
 }
 
-// ================= 3. 拦截所有“签到/赚钱”弹窗 (底层大招) =================
-// 任何弹窗最终都会走 UIViewController 的 presentViewController 方法
+// ================= 3. 弹窗拦截 (增加安全判断) =================
 static void (*orig_presentVC)(id, SEL, UIViewController *, BOOL, void (^)(void)) = NULL;
 static void my_presentVC(id self, SEL _cmd, UIViewController *viewControllerToPresent, BOOL flag, void (^completion)(void)) {
     if (viewControllerToPresent) {
         NSString *clsName = NSStringFromClass([viewControllerToPresent class]);
-        // 通杀关键字：签到、任务、奖励、赚钱、金币、活动
         NSArray *junkKeywords = @[@"Sign", @"CheckIn", @"Task", @"Reward", @"Earning", @"Coin", @"Activity", @"Popup"];
+        
+        // 对于 Swift 的弹窗，可能带点名（如 ITing.Popup）
         for (NSString *keyword in junkKeywords) {
             if ([clsName containsString:keyword]) {
                 NSLog(@"[Tweak] 成功拦截弹窗: %@", clsName);
-                return; // 直接 return，取消弹窗
+                return; // 拦截弹窗
             }
         }
     }
     if (orig_presentVC) orig_presentVC(self, _cmd, viewControllerToPresent, flag, completion);
 }
 
-// ================= 4. 拦截赚钱悬浮球的初始化 =================
-// 探针提供的类名，在 init 阶段直接拦截，连内存都不给它分配
-static id (*orig_earning_init)(id, SEL, CGRect) = NULL;
-static id my_earning_init(id self, SEL _cmd, CGRect frame) {
-    return nil; // 直接返回 nil，让悬浮球创建失败
-}
-
-// ================= 5. 底栏福利隐藏 + 完美 4 等分 =================
+// ================= 4. 底栏福利隐藏 + 完美 4 等分 =================
 static void (*orig_tbi_layout)(id, SEL) = NULL;
 static void my_tbi_layout(id self, SEL _cmd) {
     if (orig_tbi_layout) orig_tbi_layout(self, _cmd);
@@ -108,9 +103,37 @@ static void my_tbi_layout(id self, SEL _cmd) {
     });
 }
 
+// ================= 5. 定时清扫赚钱悬浮球和恶心的广告 =================
+static void removeJunkViews(UIView *view) {
+    if (!view) return;
+    NSString *clsName = NSStringFromClass([view class]);
+    
+    NSArray *junkKeywords = @[@"Earning", @"Levitator", @"OnlineEarning", @"GoldCoin"];
+    
+    for (NSString *keyword in junkKeywords) {
+        if ([clsName containsString:keyword]) {
+            view.hidden = YES;
+            view.alpha = 0;
+            view.userInteractionEnabled = NO;
+            break;
+        }
+    }
+    
+    for (UIView *sub in view.subviews) {
+        removeJunkViews(sub);
+    }
+}
+
+static void startCleaner() {
+    [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer * _Nonnull timer) {
+        for (UIWindow *window in [UIApplication sharedApplication].windows) {
+            removeJunkViews(window);
+        }
+    }];
+}
+
 // ================= 6. 初始化 Hook =================
 %ctor {
-    // 老开屏
     Class splashCls = NSClassFromString(@"TMEAdOperateSplash");
     if (splashCls) {
         Method m = class_getClassMethod(splashCls, @selector(needShowSplashWithLaunchType:));
@@ -122,14 +145,12 @@ static void my_tbi_layout(id self, SEL _cmd) {
         if (m) { orig_hasP0AdSplash = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)my_hasP0AdSplash); }
     }
 
-    // 新开屏 (AppPrepareController)
     Class prepareCls = NSClassFromString(@"lazyaudio.AppPrepareController");
     if (prepareCls) {
         Method m = class_getInstanceMethod(prepareCls, @selector(viewDidAppear:));
         if (m) { orig_prepare_viewDidAppear = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)my_prepare_viewDidAppear); }
     }
 
-    // 拦截所有弹窗
     Class vcCls = [UIViewController class];
     Method mPresent = class_getInstanceMethod(vcCls, @selector(presentViewController:animated:completion:));
     if (mPresent) {
@@ -137,20 +158,10 @@ static void my_tbi_layout(id self, SEL _cmd) {
         method_setImplementation(mPresent, (IMP)my_presentVC);
     }
 
-    // 拦截赚钱悬浮球 (探针给的类名)
-    NSArray *earningClasses = @[@"lazyaudio.EarningTaskBallView", @"lazyaudio.OnlineEarningNewLevitator", @"lazyaudio.EarningTaskEntryView"];
-    for (NSString *clsStr in earningClasses) {
-        Class cls = NSClassFromString(clsStr);
-        if (cls) {
-            Method m = class_getInstanceMethod(cls, @selector(initWithFrame:));
-            if (m) {
-                orig_earning_init = (void *)method_getImplementation(m);
-                method_setImplementation(m, (IMP)my_earning_init);
-            }
-        }
-    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        startCleaner();
+    });
 
-    // 底栏
     Class tbi = NSClassFromString(@"lazyaudio.TabBarItemView");
     if (tbi) {
         Method m = class_getInstanceMethod(tbi, @selector(layoutSubviews));
