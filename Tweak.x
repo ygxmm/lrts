@@ -13,83 +13,78 @@
 @interface TGGDTSplashViewController : UIViewController
 @end
 
-// 找到真正装多个 TabBarItemView 的祖先容器，然后重排
-static void LAFixTabBar(UIView *item) {
-    UIView *parent = item.superview;
-    while (parent) {
-        NSUInteger cnt = 0;
-        for (UIView *sub in parent.subviews) {
-            if ([NSStringFromClass([sub class]) containsString:@"TabBarItemView"]) cnt++;
-        }
-        if (cnt >= 2) break;
-        parent = parent.superview;
-    }
-    if (!parent) return;
-
-    NSMutableArray<UIView *> *visibles = [NSMutableArray array];
-    for (UIView *sub in parent.subviews) {
-        if (![sub isKindOfClass:[UIView class]]) continue;
-        NSString *cls = NSStringFromClass([sub class]);
-        if (![cls containsString:@"TabBarItemView"]) continue;
-        if (sub.tag == 3) {
-            sub.hidden = YES;
-            sub.alpha = 0.0;
-            sub.userInteractionEnabled = NO;
-            sub.frame = CGRectMake(-9999, sub.frame.origin.y, sub.frame.size.width, sub.frame.size.height);
-        } else {
-            [visibles addObject:sub];
-        }
-    }
-
-    NSUInteger n = visibles.count;
-    if (n == 0) return;
-
-    CGFloat W = parent.bounds.size.width;
-    CGFloat H = parent.bounds.size.height;
-    if (W <= 0) return;
-
-    CGFloat h = visibles.firstObject.frame.size.height;
-    if (h <= 0) h = H;
-    CGFloat y = visibles.firstObject.frame.origin.y;
-    if (isnan(y)) y = 0;
-
-    CGFloat w = W / (CGFloat)n;
-    for (NSUInteger i = 0; i < n; i++) {
-        UIView *v = visibles[i];
-        v.frame = CGRectMake(w * i, y, w, h);
-    }
+static BOOL IsTabBarItemView(UIView *v) {
+    NSString *cls = NSStringFromClass([v class]);
+    return [cls containsString:@"TabBarItemView"] && ![cls containsString:@"Player"];
 }
 
-// ========== 1. 底栏：隐藏福利 + 剩余 4 项均分 ==========
-%hook _TtC9lazyaudio14TabBarItemView
+// ========== 1. 全局布局修正：任何容器布局后，若直接子视图含底栏 item，则重排 ==========
+%hook UIView
+- (void)layoutSubviews {
+    %orig;
 
+    NSMutableArray<UIView *> *items = [NSMutableArray array];
+    for (UIView *sub in self.subviews) {
+        if (IsTabBarItemView(sub)) {
+            [items addObject:sub];
+        }
+    }
+    if (items.count < 2) return;
+
+    NSMutableArray<UIView *> *visible = [NSMutableArray array];
+    for (UIView *item in items) {
+        if (item.tag == 3) {
+            item.hidden = YES;
+            item.alpha = 0.0;
+            item.userInteractionEnabled = NO;
+            item.frame = CGRectZero;
+        } else {
+            [visible addObject:item];
+        }
+    }
+
+    NSUInteger count = visible.count;
+    if (count == 0) return;
+
+    CGFloat totalW = self.bounds.size.width;
+    if (totalW <= 0) return;
+
+    UIView *first = visible.firstObject;
+    CGFloat y = first.frame.origin.y;
+    CGFloat h = first.frame.size.height;
+    if (h <= 0) h = self.bounds.size.height;
+    CGFloat w = totalW / (CGFloat)count;
+
+    for (NSUInteger i = 0; i < count; i++) {
+        UIView *item = visible[i];
+        item.frame = CGRectMake(w * (CGFloat)i, y, w, h);
+    }
+}
+%end
+
+// ========== 2. TabBarItemView 兜底隐藏 + 触发重排 ==========
+%hook _TtC9lazyaudio14TabBarItemView
 - (void)setTag:(NSInteger)tag {
     %orig;
     if (self.tag == 3) {
         self.hidden = YES;
         self.alpha = 0.0;
         self.userInteractionEnabled = NO;
+        [self.superview setNeedsLayout];
     }
-    dispatch_async(dispatch_get_main_queue(), ^{
-        LAFixTabBar(self);
-    });
 }
-
 - (void)didMoveToWindow {
     %orig;
     if (self.tag == 3) {
         self.hidden = YES;
         self.alpha = 0.0;
         self.userInteractionEnabled = NO;
+        [self.superview setNeedsLayout];
     }
-    dispatch_async(dispatch_get_main_queue(), ^{
-        LAFixTabBar(self);
-    });
 }
-
 %end
 
-// ========== 2. 签到按钮 ==========
+// ========== 3. 签到按钮 ==========
 %hook _TtC9lazyaudio12MeSignButton
 - (void)didMoveToWindow {
     %orig;
@@ -99,7 +94,7 @@ static void LAFixTabBar(UIView *item) {
 }
 %end
 
-// ========== 3. 开屏 Window ==========
+// ========== 4. 开屏 Window 拦截 ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden { hidden = YES; %orig; }
 - (void)makeKeyAndVisible { %orig; self.hidden = YES; }
@@ -126,16 +121,30 @@ static void LAFixTabBar(UIView *item) {
 }
 %end
 
-// ========== 4. 弹窗拦截 ==========
+// ========== 5. 弹窗拦截（放行探针） ==========
 %hook UIViewController
-- (void)presentViewController:(UIViewController *)viewControllerToPresent
+- (void)presentViewController:(UIViewController *)vc
                      animated:(BOOL)flag
                    completion:(void (^)(void))completion {
-    if (!viewControllerToPresent) { %orig; return; }
-    NSString *className = NSStringFromClass([viewControllerToPresent class]);
-    NSArray<NSString *> *blockedKeywords = @[@"Alert", @"Popup", @"Coin", @"Reward"];
-    for (NSString *keyword in blockedKeywords) {
-        if ([className rangeOfString:keyword options:NSCaseInsensitiveSearch].location != NSNotFound) {
+    if (!vc) { %orig; return; }
+
+    NSString *cls = NSStringFromClass([vc class]);
+
+    // 放行调试/探针类
+    NSArray *allow = @[@"Probe", @"FLEX", @"Debug", @"Inspector", @"Console", @"ClassDump", @"Dump"];
+    for (NSString *k in allow) {
+        if ([cls rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            %orig; return;
+        }
+    }
+    // 放行系统 Alert（探针选择菜单常用）
+    if ([vc isKindOfClass:[UIAlertController class]]) {
+        %orig; return;
+    }
+
+    NSArray *blocked = @[@"Alert", @"Popup", @"Coin", @"Reward"];
+    for (NSString *k in blocked) {
+        if ([cls rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) {
             return;
         }
     }
