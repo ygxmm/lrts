@@ -7,10 +7,6 @@
 @end
 @interface _TtC13Advertisement14SplashAdWindow : UIWindow
 @end
-@interface _TtC13Advertisement22SplashAdViewController : UIViewController
-@end
-@interface TGGDTSplashViewController : UIViewController
-@end
 
 static Class gTabItemClass = Nil;
 static char kLAIgnoredKey;
@@ -23,10 +19,9 @@ static BOOL LAIsTabItem(UIView *v) {
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    NSLog(@"[LazyAudio] tweak loaded (soft splash v2)");
+    NSLog(@"[LazyAudio] tweak loaded (soft splash, no VC)");
 }
 
-// ========== 1. 底栏重排 ==========
 %hook UIView
 - (void)layoutSubviews {
     %orig;
@@ -106,7 +101,6 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 2. TabBarItemView 兜底 ==========
 %hook _TtC9lazyaudio14TabBarItemView
 - (void)setTag:(NSInteger)tag {
     %orig;
@@ -126,7 +120,6 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 3. 开屏 Window：只拦 setHidden ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
@@ -138,22 +131,5 @@ __attribute__((constructor)) static void LAInit(void) {
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
     %orig;
-}
-%end
-
-// ========== 4. 开屏 VC：只隐藏 view，不 dismiss ==========
-%hook _TtC13Advertisement22SplashAdViewController
-- (void)viewDidAppear:(BOOL)animated {
-    %orig;
-    if (!self.view.hidden) self.view.hidden = YES;
-    if (self.view.alpha != 0.0) self.view.alpha = 0.0;
-}
-%end
-
-%hook TGGDTSplashViewController
-- (void)viewDidAppear:(BOOL)animated {
-    %orig;
-    if (!self.view.hidden) self.view.hidden = YES;
-    if (self.view.alpha != 0.0) self.view.alpha = 0.0;
 }
 %end
