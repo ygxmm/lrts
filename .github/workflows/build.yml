@@ -13,7 +13,8 @@ jobs:
       - name: Install deps and ldid
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lldb build-essential fakeroot libssl-dev libcurl4-openssl-dev libxml2-dev libncurses5-dev libpng-dev git make xz-utils libplist-dev wget
+          # 增加了 lld 工具包，专门用来解决无法识别 iOS 格式的问题
+          sudo apt-get install -y clang lld lldb build-essential fakeroot libssl-dev libcurl4-openssl-dev libxml2-dev libncurses5-dev libpng-dev git make xz-utils libplist-dev wget
           wget https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 -O ldid
           chmod +x ldid
           sudo mv ldid /usr/local/bin/ldid
@@ -31,14 +32,17 @@ jobs:
 
       - name: Build
         run: |
-          # 核心魔法：把系统的 clang 软链接到 Theos 期望的路径下
           mkdir -p $THEOS/toolchain/linux/iphone/bin
           ln -sf $(which clang) $THEOS/toolchain/linux/iphone/bin/clang
           ln -sf $(which clang++) $THEOS/toolchain/linux/iphone/bin/clang++
           
-          # 显式指定编译目标（iOS 14.0），避免 Theos 找不到默认目标
+          # 核心修复：把 llvm 的 mach-o 链接器伪装成 Theos 想要的 ld64
+          ln -sf $(which ld64.lld) $THEOS/toolchain/linux/iphone/bin/ld64
+          ln -sf $(which ld64.lld) $THEOS/toolchain/linux/iphone/bin/ld
+          
           make clean || true
-          make package TARGET=iphone:clang:latest:14.0 FINALPACKAGE=1
+          # 强制使用 clang 和 lld 进行链接
+          make package TARGET=iphone:clang:latest:14.0 FINALPACKAGE=1 CFLAGS="-fuse-ld=ld64.lld" LDFLAGS="-fuse-ld=ld64.lld"
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
