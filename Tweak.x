@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <string.h>
+#import <stdarg.h>
 
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
@@ -14,6 +15,26 @@
 @end
 @interface TGGDTSplashViewController : UIViewController
 @end
+
+static void LALog(NSString *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
+    va_end(args);
+    NSLog(@"[LazyAudio] %@", msg);
+    NSString *dir = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    if (!dir.length) return;
+    NSString *path = [dir stringByAppendingPathComponent:@"lazyaudio-tweak.log"];
+    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], msg];
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!fh) {
+        [line writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    } else {
+        [fh seekToEndOfFile];
+        [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+        [fh closeFile];
+    }
+}
 
 static BOOL gEnableTabBar = YES;
 static BOOL gEnableSignButton = YES;
@@ -247,7 +268,7 @@ static BOOL LAIsTabItem(UIView *v) {
     static const char *blockWords[] = {"Alert", "Popup", "Coin", "Reward", NULL};
     for (int i = 0; blockWords[i]; i++) {
         if (strcasestr(name, blockWords[i])) {
-            NSLog(@"[LazyAudio] 拦截弹窗: %s", name);
+            LALog(@"拦截弹窗: %s", name);
             if (completion) {
                 dispatch_async(dispatch_get_main_queue(), completion);
             }
