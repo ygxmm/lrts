@@ -1,70 +1,84 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
-#import <objc/runtime.h>
 
-static void writeLog(NSString *format, ...) {
-    va_list args;
-    va_start(args, format);
-    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
-    va_end(args);
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *path = [[paths firstObject] stringByAppendingPathComponent:@"lazyaudio_probe.txt"];
-    NSString *logLine = [NSString stringWithFormat:@"%@\n", msg];
-    
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if (![fm fileExistsAtPath:path]) {
-        [logLine writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    } else {
-        NSFileHandle *fileHandle = [NSFileHandle fileHandleForWritingAtPath:path];
-        [fileHandle seekToEndOfFile];
-        [fileHandle writeData:[logLine dataUsingEncoding:NSUTF8StringEncoding]];
-        [fileHandle closeFile];
-    }
+// ================= 1. 斩首签到按钮 (基于 MeSignButton.h) =================
+%hook MeSignButton
+
+// 无论它是 initWithFrame 还是 didMoveToWindow，只要它想上屏，我们就隐藏
+- (void)didMoveToWindow {
+    %orig;
+    self.hidden = YES;
+    self.alpha = 0;
+    self.userInteractionEnabled = NO;
 }
 
-// 递归寻找关键视图
-static void findKeyViews(UIView *view, int depth) {
-    if (!view || depth > 20) return; // 深度限制放宽到 20 层
-    NSString *clsName = NSStringFromClass([view class]);
-    
-    // 只要类名带这些关键字，就重点记录
-    NSArray *keys = @[@"TabBar", @"Splash", @"AdWindow", @"Earning", @"GDT"];
-    BOOL isKey = NO;
-    for (NSString *k in keys) {
-        if ([clsName containsString:k]) {
-            isKey = YES;
-            break;
-        }
-    }
-    
-    if (isKey) {
-        NSString *indent = [@"" stringByPaddingToLength:depth * 2 withString:@" " startingAtIndex:0];
-        writeLog(@"%@-> %@ | tag:%ld | hidden:%d | frame:%@", indent, clsName, (long)view.tag, view.hidden, NSStringFromCGRect(view.frame));
-    }
-    
-    for (UIView *sub in view.subviews) {
-        findKeyViews(sub, isKey ? depth + 1 : depth); // 如果不是关键字，递归时不增加缩进，保持扁平
+%end
+
+// ================= 2. 干掉开屏广告 (基于 LaunchSplashWindow / TGGDTSplashViewController.h) =================
+// 原生开屏 Window，拒绝上屏
+%hook LaunchSplashWindow
+- (void)makeKeyAndVisible {
+    // 拦截，不给上屏
+}
+%end
+
+// 广点通开屏 VC，一出现就隐身
+%hook TGGDTSplashViewController
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    self.view.hidden = YES;
+    self.view.alpha = 0;
+}
+%end
+
+// ================= 3. 底栏福利隐藏 (基于 TabBarItemView.h) =================
+%hook TabBarItemView
+- (void)layoutSubviews {
+    %orig;
+    // 探针实锤，福利的 tag 为 3
+    if (self.tag == 3) {
+        self.hidden = YES;
+        self.alpha = 0;
+        self.userInteractionEnabled = NO;
     }
 }
+%end
 
-static void startProbe() {
-    [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer * _Nonnull timer) {
-        // 每次扫描前清空旧日志，只保留最新状态，防止文件过大
-        NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-        NSString *path = [[paths firstObject] stringByAppendingPathComponent:@"lazyaudio_probe.txt"];
-        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+// ================= 4. 赚钱悬浮球隐藏 (基于 EarningTask 系列头文件) =================
+%hook EarningTaskBallView
+- (void)didMoveToWindow {
+    %orig;
+    self.hidden = YES;
+}
+%end
+
+%hook OnlineEarningNewEntryView
+- (void)updateStateWithIsEnforce:(BOOL)enforce {
+    %orig;
+    self.hidden = YES;
+}
+%end
+
+// ================= 5. 拦腰斩断弹窗调度中心 (最核心) =================
+// 由于头文件里有一大堆 AlertDispatcher 系列（Service, API, Model），
+// 我们直接在最底层的 UIViewController 层面，拦截所有可能带有弹窗意义的弹窗
+%hook UIViewController
+- (void)presentViewController:(UIViewController *)viewControllerToPresent animated:(BOOL)flag completion:(void (^)(void))completion {
+    NSString *clsName = NSStringFromClass([viewControllerToPresent class]);
+    
+    // 只要类名带这些字眼，直接拒绝弹出，连动画都不给
+    if ([clsName containsString:@"AlertDispatcher"] ||
+        [clsName containsString:@"CouponAlert"] ||
+        [clsName containsString:@"Coin"] ||
+        [clsName containsString:@"Earn"] ||
+        [clsName containsString:@"Sign"] ||
+        [clsName containsString:@"Reward"] ||
+        [clsName containsString:@"Popup"]) {
         
-        writeLog(@"\n================ 开始扫描 ================");
-        for (UIWindow *win in [UIApplication sharedApplication].windows) {
-            writeLog(@"Window: %@ | level:%f | hidden:%d", NSStringFromClass([win class]), win.windowLevel, win.hidden);
-            findKeyViews(win, 1);
-        }
-        writeLog(@"================ 扫描结束 ================\n");
-    }];
+        NSLog(@"[Tweak] 成功拦截恶心弹窗: %@", clsName);
+        return; 
+    }
+    
+    %orig;
 }
-
-%ctor {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        startProbe();
-    });
-}
+%end
