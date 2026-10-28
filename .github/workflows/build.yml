@@ -10,19 +10,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install deps and hijack linker
+      - name: Install deps
         run: |
           sudo apt-get update
           sudo apt-get install -y clang lld build-essential fakeroot libssl-dev libcurl4-openssl-dev libxml2-dev libncurses5-dev libpng-dev git make xz-utils libplist-dev wget
-          
-          # 下载 ldid
           wget https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 -O ldid
           chmod +x ldid
           sudo mv ldid /usr/local/bin/ldid
-          
-          # 核心魔法：直接强制覆盖系统的 ld 链接器
-          sudo rm -f /usr/bin/ld
-          sudo ln -sf $(which ld64.lld) /usr/bin/ld
 
       - name: Setup Theos and iOS SDK
         run: |
@@ -37,8 +31,19 @@ jobs:
 
       - name: Build
         run: |
+          # 1. 创建缺失的工具链目录
+          mkdir -p $THEOS/toolchain/linux/iphone/bin
+          
+          # 2. 把所有编译器软链接进去 (用 readlink -f 获取真实路径，防止软链套娃)
+          ln -sf $(readlink -f $(which clang)) $THEOS/toolchain/linux/iphone/bin/clang
+          ln -sf $(readlink -f $(which clang++)) $THEOS/toolchain/linux/iphone/bin/clang++
+          # 3. 把 llvm 的 Mach-O 链接器伪装成 ld
+          ln -sf $(readlink -f $(which ld64.lld)) $THEOS/toolchain/linux/iphone/bin/ld
+          
+          # 4. 把咱们伪造的工具链放在 PATH 最前面，Clang 一调用 ld 就会优先用这个
+          export PATH=$THEOS/toolchain/linux/iphone/bin:$PATH
+          
           make clean || true
-          # 因为系统的 ld 已经被我们替换成了支持 iOS 的 lld，所以不需要加任何烦人的参数了
           make package TARGET=iphone:clang:latest:14.0 FINALPACKAGE=1
 
       - name: Upload deb
