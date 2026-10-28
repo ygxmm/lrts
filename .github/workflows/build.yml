@@ -10,13 +10,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install deps and ldid
+      - name: Install deps and hijack linker
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld lldb build-essential fakeroot libssl-dev libcurl4-openssl-dev libxml2-dev libncurses5-dev libpng-dev git make xz-utils libplist-dev wget
+          sudo apt-get install -y clang lld build-essential fakeroot libssl-dev libcurl4-openssl-dev libxml2-dev libncurses5-dev libpng-dev git make xz-utils libplist-dev wget
+          
+          # 下载 ldid
           wget https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 -O ldid
           chmod +x ldid
           sudo mv ldid /usr/local/bin/ldid
+          
+          # 核心魔法：直接强制覆盖系统的 ld 链接器
+          sudo rm -f /usr/bin/ld
+          sudo ln -sf $(which ld64.lld) /usr/bin/ld
 
       - name: Setup Theos and iOS SDK
         run: |
@@ -31,17 +37,8 @@ jobs:
 
       - name: Build
         run: |
-          mkdir -p $THEOS/toolchain/linux/iphone/bin
-          ln -sf $(which clang) $THEOS/toolchain/linux/iphone/bin/clang
-          ln -sf $(which clang++) $THEOS/toolchain/linux/iphone/bin/clang++
-          ln -sf $(which ld64.lld) $THEOS/toolchain/linux/iphone/bin/ld64
-          ln -sf $(which ld64.lld) $THEOS/toolchain/linux/iphone/bin/ld
-          
-          # 核心修复：把自建的 toolchain 路径放到 PATH 最前面，这样 Clang 找 ld 时直接命中我们自己的 ld64.lld
-          export PATH=$THEOS/toolchain/linux/iphone/bin:$PATH
-          
           make clean || true
-          # 移除了会报错的 -fuse-ld 参数
+          # 因为系统的 ld 已经被我们替换成了支持 iOS 的 lld，所以不需要加任何烦人的参数了
           make package TARGET=iphone:clang:latest:14.0 FINALPACKAGE=1
 
       - name: Upload deb
