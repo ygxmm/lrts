@@ -1,6 +1,8 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
+#import <stdarg.h>
+#import <string.h>
 
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
@@ -26,7 +28,6 @@
 - (NSString *)pageName;
 @end
 
-// 日志用类（只 hook 不干预）
 @interface _TtC9lazyaudio16MiniPlayContainer : UIView
 @end
 @interface _TtC9lazyaudio15MiniBarPlayView : UIView
@@ -39,12 +40,37 @@
 
 static Class gTabItemClass = Nil;
 static char kLAIgnoredKey;
-
 static double gLATweakStart = 0;
+
+// ========== 沙盒日志 ==========
+static void LALog(NSString *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
+    va_end(args);
+
+    NSArray<NSString *> *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *dir = docs.firstObject;
+    if (!dir.length) return;
+
+    NSString *path = [dir stringByAppendingPathComponent:@"lazyaudio-tweak.log"];
+    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], msg];
+
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!fh) {
+        [line writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    } else {
+        @try {
+            [fh seekToEndOfFile];
+            [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+            [fh closeFile];
+        } @catch (NSException *e) {}
+    }
+}
 
 static void LATimeLog(const char *tag) {
     double now = CACurrentMediaTime();
-    NSLog(@"[LA-T] %s  %.3f  (since start %.3f)", tag, now, now - gLATweakStart);
+    LALog(@"[LA-T] %s  %.3f  (since start %.3f)", tag, now, now - gLATweakStart);
 }
 
 static BOOL LAIsTabItem(UIView *v) {
@@ -56,7 +82,9 @@ static BOOL LAIsTabItem(UIView *v) {
 
 __attribute__((constructor)) static void LAInit(void) {
     gLATweakStart = CACurrentMediaTime();
-    NSLog(@"[LazyAudio] tweak loaded (v6 timing)");
+    LALog(@"tweak loaded (v7 sandbox-log)");
+    NSArray<NSString *> *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    LALog(@"log path: %@", [docs.firstObject stringByAppendingPathComponent:@"lazyaudio-tweak.log"]);
 }
 
 // ========== 1. 底栏重排 ==========
@@ -237,14 +265,14 @@ __attribute__((constructor)) static void LAInit(void) {
 // ========== 6. Hippy 弹窗 ==========
 %hook HippyViewController
 - (void)dialogViewDisplay:(id)arg {
-    NSLog(@"[LA-T] Hippy dialogViewDisplay intercepted, pageName=%@", [self pageName]);
+    LALog(@"[LA-T] Hippy dialogViewDisplay intercepted, pageName=%@", [self pageName]);
 }
 - (void)dialogViewDismiss:(id)arg {
     %orig;
 }
 %end
 
-// ========== 7. 播放链路时间戳（只打日志，不改行为） ==========
+// ========== 7. 播放链路时间戳 ==========
 %hook AudioPlayerBridge
 + (void)playWithBookId:(long long)a0 entityIndex:(long long)a1 autoSeek:(double)a2 listType:(long long)a3 autoPlay:(BOOL)a4 {
     LATimeLog("AudioPlayerBridge.playWithBookId BEGIN");
