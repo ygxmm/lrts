@@ -68,28 +68,46 @@ static BOOL LAIsTabItem(UIView *v) {
     return gTabItemClass && [v class] == gTabItemClass;
 }
 
-__attribute__((constructor)) static void LAInit(void) {
-    LALog(@"tweak loaded (v9 early-preload)");
+// ========== 预加载方法封装 ==========
+static void LADoPreload(const char *source) {
+    Class bridgeClass = objc_getClass("AudioPlayerBridge");
+    if (bridgeClass) {
+        SEL sel = NSSelectorFromString(@"loadPlayerButNotAutoPlay");
+        if ([bridgeClass respondsToSelector:sel]) {
+            ((void (*)(id, SEL))objc_msgSend)(bridgeClass, sel);
+            LALog(@"[LA-T] 预加载触发 (%s)", source);
+        }
+    }
 }
 
-// ========== 1. 极早触发预加载 ==========
+__attribute__((constructor)) static void LAInit(void) {
+    LALog(@"tweak loaded (v10 max-preload)");
+    
+    // 启动时即刻向主线程发送预加载请求
+    dispatch_async(dispatch_get_main_queue(), ^{
+        LADoPreload("Launch");
+    });
+}
+
+// ========== 1. 极早预加载兜底 ==========
 %hook UIViewController
 - (void)viewDidLoad {
     %orig;
-    if ([NSStringFromClass([self class]) isEqualToString:@"lazyaudio.AppPrepareController"]) {
-        static dispatch_once_t onceToken;
-        dispatch_once(&onceToken, ^{
-            LALog(@"[LA-T] AppPrepareController.viewDidLoad，准备触发极早预加载");
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                Class bridgeClass = objc_getClass("AudioPlayerBridge");
-                if (bridgeClass) {
-                    SEL sel = NSSelectorFromString(@"loadPlayerButNotAutoPlay");
-                    if ([bridgeClass respondsToSelector:sel]) {
-                        ((void (*)(id, SEL))objc_msgSend)(bridgeClass, sel);
-                        LALog(@"[LA-T] 极早预加载 loadPlayerButNotAutoPlay 已触发");
-                    }
-                }
-            });
+    NSString *cls = NSStringFromClass([self class]);
+    if ([cls isEqualToString:@"lazyaudio.AppPrepareController"] || 
+        [cls isEqualToString:@"lazyaudio.AppMainController"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            LADoPreload("viewDidLoad");
+        });
+    }
+}
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    NSString *cls = NSStringFromClass([self class]);
+    if ([cls isEqualToString:@"lazyaudio.AppMainController"]) {
+        // 回到首页时再刷新一次数据
+        dispatch_async(dispatch_get_main_queue(), ^{
+            LADoPreload("viewDidAppear");
         });
     }
 }
@@ -119,7 +137,7 @@ __attribute__((constructor)) static void LAInit(void) {
         if (sub.tag == 3) {
             if (!sub.hidden) sub.hidden = YES;
             if (sub.alpha != 0.0) sub.alpha = 0.0;
-            if (sub.userInteractionEnabled) sub.userInteractionEnabled = NO;
+            if (self.userInteractionEnabled) self.userInteractionEnabled = NO;
             if (!CGRectEqualToRect(sub.frame, CGRectZero)) {
                 sub.frame = CGRectZero;
             }
