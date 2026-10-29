@@ -3,9 +3,21 @@
 
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
+@interface _TtC9lazyaudio12MeSignButton : UIView
+@end
 @interface _TtC9lazyaudio18LaunchSplashWindow : UIWindow
 @end
 @interface _TtC13Advertisement14SplashAdWindow : UIWindow
+@end
+@interface _TtC9lazyaudio26OnlineEarningNewLevitator : UIView
+@end
+@interface _TtC9lazyaudio25OnlineEarningNewTipsView : UIView
+@end
+@interface _TtC9lazyaudio19EarningTaskBallView : UIView
+@end
+@interface _TtC9lazyaudio20EarningTaskEntryView : UIView
+@end
+@interface _TtC9lazyaudio25OnlineEarningNewEntryView : UIView
 @end
 
 static Class gTabItemClass = Nil;
@@ -19,7 +31,13 @@ static BOOL LAIsTabItem(UIView *v) {
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    NSLog(@"[LazyAudio] tweak loaded (alpha-zero splash)");
+    NSLog(@"[LazyAudio] tweak loaded (v3 ad+earning)");
+    NSLog(@"[LazyAudio] Levitator=%p Tips=%p Ball=%p Entry=%p NewEntry=%p",
+          objc_getClass("_TtC9lazyaudio26OnlineEarningNewLevitator"),
+          objc_getClass("_TtC9lazyaudio25OnlineEarningNewTipsView"),
+          objc_getClass("_TtC9lazyaudio19EarningTaskBallView"),
+          objc_getClass("_TtC9lazyaudio20EarningTaskEntryView"),
+          objc_getClass("_TtC9lazyaudio25OnlineEarningNewEntryView"));
 }
 
 // ========== 1. 底栏重排 ==========
@@ -122,7 +140,17 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 3. lazyaudio 开屏 Window：只拦 setHidden ==========
+// ========== 3. 签到按钮 ==========
+%hook _TtC9lazyaudio12MeSignButton
+- (void)didMoveToWindow {
+    %orig;
+    if (!self.hidden) self.hidden = YES;
+    if (self.alpha != 0.0) self.alpha = 0.0;
+    if (self.userInteractionEnabled) self.userInteractionEnabled = NO;
+}
+%end
+
+// ========== 4. lazyaudio 开屏 Window ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
@@ -130,7 +158,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 4. 广告开屏 Window：alpha 强制归零 ==========
+// ========== 5. 广告开屏 Window：强制 hidden ==========
 %hook _TtC13Advertisement14SplashAdWindow
 - (void)didMoveToWindow {
     %orig;
@@ -141,5 +169,49 @@ __attribute__((constructor)) static void LAInit(void) {
     %orig;
     self.alpha = 0.0;
     self.hidden = YES;
+}
+%end
+
+// ========== 6. 赚钱悬浮球 / 提示 / 任务入口 ==========
+%hook _TtC9lazyaudio26OnlineEarningNewLevitator
+- (void)willMoveToWindow:(UIWindow *)newWindow {
+    %orig;
+    self.hidden = YES;
+    self.alpha = 0.0;
+    self.userInteractionEnabled = NO;
+}
+%end
+
+%hook _TtC9lazyaudio25OnlineEarningNewTipsView
+- (void)didMoveToWindow {
+    %orig;
+    self.hidden = YES;
+    self.alpha = 0.0;
+    self.userInteractionEnabled = NO;
+}
+%end
+
+%hook _TtC9lazyaudio19EarningTaskBallView
+- (void)didMoveToWindow {
+    %orig;
+    self.hidden = YES;
+    self.alpha = 0.0;
+    self.userInteractionEnabled = NO;
+}
+%end
+
+%hook _TtC9lazyaudio20EarningTaskEntryView
+- (void)refreshWithIsVisible:(BOOL)visible {
+    %orig;
+    self.hidden = YES;
+    self.alpha = 0.0;
+}
+%end
+
+%hook _TtC9lazyaudio25OnlineEarningNewEntryView
+- (void)updateStateWithIsEnforce:(BOOL)enforce {
+    %orig;
+    self.hidden = YES;
+    self.alpha = 0.0;
 }
 %end
