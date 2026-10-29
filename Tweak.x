@@ -69,10 +69,33 @@ static BOOL LAIsTabItem(UIView *v) {
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    LALog(@"tweak loaded (v8 preload)");
+    LALog(@"tweak loaded (v9 early-preload)");
 }
 
-// ========== 1. 底栏重排 ==========
+// ========== 1. 极早触发预加载 ==========
+%hook UIViewController
+- (void)viewDidLoad {
+    %orig;
+    if ([NSStringFromClass([self class]) isEqualToString:@"lazyaudio.AppPrepareController"]) {
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            LALog(@"[LA-T] AppPrepareController.viewDidLoad，准备触发极早预加载");
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                Class bridgeClass = objc_getClass("AudioPlayerBridge");
+                if (bridgeClass) {
+                    SEL sel = NSSelectorFromString(@"loadPlayerButNotAutoPlay");
+                    if ([bridgeClass respondsToSelector:sel]) {
+                        ((void (*)(id, SEL))objc_msgSend)(bridgeClass, sel);
+                        LALog(@"[LA-T] 极早预加载 loadPlayerButNotAutoPlay 已触发");
+                    }
+                }
+            });
+        });
+    }
+}
+%end
+
+// ========== 2. 底栏重排 ==========
 %hook UIView
 - (void)layoutSubviews {
     %orig;
@@ -152,7 +175,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 2. TabBarItemView 兜底 ==========
+// ========== 3. TabBarItemView 兜底 ==========
 %hook _TtC9lazyaudio14TabBarItemView
 - (void)setTag:(NSInteger)tag {
     %orig;
@@ -172,7 +195,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 3. 签到按钮 ==========
+// ========== 4. 签到按钮 ==========
 %hook _TtC9lazyaudio12MeSignButton
 - (void)didMoveToWindow {
     %orig;
@@ -182,7 +205,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 4. 开屏 Window ==========
+// ========== 5. 开屏 Window ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
@@ -203,7 +226,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 5. 赚钱悬浮球 / 提示 / 任务入口 ==========
+// ========== 6. 赚钱悬浮球 / 提示 / 任务入口 ==========
 %hook _TtC9lazyaudio25OnlineEarningNewLevitator
 - (void)willMoveToWindow:(UIWindow *)newWindow {
     %orig;
@@ -247,37 +270,12 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 6. Hippy 弹窗 ==========
+// ========== 7. Hippy 弹窗 ==========
 %hook HippyViewController
 - (void)dialogViewDisplay:(id)arg {
     LALog(@"[LA-T] Hippy dialogViewDisplay intercepted, pageName=%@", [self pageName]);
 }
 - (void)dialogViewDismiss:(id)arg {
     %orig;
-}
-%end
-
-// ========== 7. 播放器预加载（消除 MiniPlayBar 延迟） ==========
-%hook UIViewController
-- (void)viewDidAppear:(BOOL)animated {
-    %orig;
-
-    // 当主界面出现时，延迟 1.5 秒静默预加载播放数据
-    if ([NSStringFromClass([self class]) isEqualToString:@"lazyaudio.AppMainController"]) {
-        static dispatch_once_t onceToken;
-        dispatch_once(&onceToken, ^{
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                LALog(@"[LA-T] 开始触发后台预加载播放器数据");
-                Class bridgeClass = objc_getClass("AudioPlayerBridge");
-                if (bridgeClass) {
-                    SEL sel = NSSelectorFromString(@"loadPlayerButNotAutoPlay");
-                    if ([bridgeClass respondsToSelector:sel]) {
-                        ((void (*)(id, SEL))objc_msgSend)(bridgeClass, sel);
-                        LALog(@"[LA-T] loadPlayerButNotAutoPlay 已触发");
-                    }
-                }
-            });
-        });
-    }
 }
 %end
