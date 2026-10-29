@@ -132,12 +132,14 @@ __attribute__((constructor)) static void LAInit(void) {
 
 // ========== 4. 广告开屏 Window：alpha 强制归零 ==========
 %hook _TtC13Advertisement14SplashAdWindow
-- (void)setAlpha:(CGFloat)alpha {
-    alpha = 0.0;
-    %orig;
-}
-- (void)makeKeyAndVisible {
+- (void)didMoveToWindow {
     %orig;
     self.alpha = 0.0;
+    self.hidden = YES;
+}
+- (void)layoutSubviews {
+    %orig;
+    self.alpha = 0.0;
+    self.hidden = YES;
 }
 %end
