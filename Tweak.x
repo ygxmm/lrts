@@ -35,7 +35,11 @@
 + (void)add:(id)a0;
 @end
 
-// 基类
+// 补充缺失的声明，告诉编译器它们继承自 UIView
+@interface _TtC9lazyaudio20FreeModeTimeoutAlert : UIView
+@end
+@interface _TtC9lazyaudio17ReaderFreeAdAlert : UIView
+@end
 @interface _TtC9lazyaudio18BaseAlertController : UIViewController
 @end
 
@@ -87,7 +91,7 @@ static void LADoPreload(const char *source) {
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    LALog(@"tweak loaded (v14 perfect-popup-block)");
+    LALog(@"tweak loaded (v15 perfect-popup-block)");
     dispatch_async(dispatch_get_main_queue(), ^{
         LADoPreload("Launch");
     });
@@ -117,7 +121,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 2. 弹窗池源头拦截（只拦特定广告/限制类） ==========
+// ========== 2. 弹窗池源头拦截 ==========
 %hook AlertPool
 + (void)add:(id)a0 {
     NSString *cls = NSStringFromClass([a0 class]);
