@@ -28,7 +28,7 @@
 - (NSString *)pageName;
 @end
 
-@interface _TtC9lazyaudio16MiniPlayContainer : UIView
+@interface _TtC9lazyaudio17MiniPlayContainer : UIView
 @end
 @interface _TtC9lazyaudio15MiniBarPlayView : UIView
 - (void)updateStatus;
@@ -274,28 +274,70 @@ __attribute__((constructor)) static void LAInit(void) {
 
 // ========== 7. 播放链路时间戳 ==========
 %hook AudioPlayerBridge
++ (void)play {
+    LATimeLog("AudioPlayerBridge.play BEGIN");
+    %orig;
+    LATimeLog("AudioPlayerBridge.play END");
+}
++ (void)pause {
+    LATimeLog("AudioPlayerBridge.pause");
+    %orig;
+}
 + (void)playWithBookId:(long long)a0 entityIndex:(long long)a1 autoSeek:(double)a2 listType:(long long)a3 autoPlay:(BOOL)a4 {
     LATimeLog("AudioPlayerBridge.playWithBookId BEGIN");
     %orig;
     LATimeLog("AudioPlayerBridge.playWithBookId END");
+}
++ (void)playWithEntityId:(long long)a0 subEntityId:(long long)a1 type:(long long)a2 autoSeek:(double)a3 listType:(long long)a4 autoPlay:(BOOL)a5 {
+    LATimeLog("AudioPlayerBridge.playWithEntityId BEGIN");
+    %orig;
+    LATimeLog("AudioPlayerBridge.playWithEntityId END");
+}
++ (void)playWithProgrammeId:(long long)a0 entityId:(long long)a1 autoSeek:(double)a2 listType:(long long)a3 autoPlay:(BOOL)a4 {
+    LATimeLog("AudioPlayerBridge.playWithProgrammeId BEGIN");
+    %orig;
+    LATimeLog("AudioPlayerBridge.playWithProgrammeId END");
 }
 + (void)loadPlayerButNotAutoPlay {
     LATimeLog("AudioPlayerBridge.loadPlayerButNotAutoPlay BEGIN");
     %orig;
     LATimeLog("AudioPlayerBridge.loadPlayerButNotAutoPlay END");
 }
++ (BOOL)isPlaying {
+    BOOL r = %orig;
+    LATimeLog("AudioPlayerBridge.isPlaying -> %d", r);
+    return r;
+}
 %end
 
-%hook _TtC9lazyaudio16MiniPlayContainer
+%hook _TtC9lazyaudio17MiniPlayContainer
 - (void)didMoveToWindow {
     %orig;
     LATimeLog("MiniPlayContainer.didMoveToWindow");
 }
 %end
 
+@interface _TtC9lazyaudio10MiniPlayBar : UIView
+@end
+
+%hook _TtC9lazyaudio10MiniPlayBar
+- (void)didMoveToWindow {
+    %orig;
+    LATimeLog("MiniPlayBar.didMoveToWindow");
+}
+%end
+
 %hook _TtC9lazyaudio15MiniBarPlayView
 - (void)updateStatus {
     %orig;
-    LATimeLog("MiniBarPlayView.updateStatus");
+    id st = nil;
+    @try {
+        st = [self valueForKey:@"status"];
+    } @catch (NSException *e) {}
+    LATimeLog("MiniBarPlayView.updateStatus status=%@", st);
+}
+- (void)didMoveToWindow {
+    %orig;
+    LATimeLog("MiniBarPlayView.didMoveToWindow window=%p", self.window);
 }
 %end
