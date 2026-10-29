@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <QuartzCore/QuartzCore.h>
 
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
@@ -25,8 +26,26 @@
 - (NSString *)pageName;
 @end
 
+// 日志用类（只 hook 不干预）
+@interface _TtC9lazyaudio16MiniPlayContainer : UIView
+@end
+@interface _TtC9lazyaudio15MiniBarPlayView : UIView
+- (void)updateStatus;
+@end
+@interface AudioPlayerBridge : NSObject
++ (void)playWithBookId:(long long)a0 entityIndex:(long long)a1 autoSeek:(double)a2 listType:(long long)a3 autoPlay:(BOOL)a4;
++ (void)loadPlayerButNotAutoPlay;
+@end
+
 static Class gTabItemClass = Nil;
 static char kLAIgnoredKey;
+
+static double gLATweakStart = 0;
+
+static void LATimeLog(const char *tag) {
+    double now = CACurrentMediaTime();
+    NSLog(@"[LA-T] %s  %.3f  (since start %.3f)", tag, now, now - gLATweakStart);
+}
 
 static BOOL LAIsTabItem(UIView *v) {
     if (!gTabItemClass) {
@@ -36,14 +55,8 @@ static BOOL LAIsTabItem(UIView *v) {
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    NSLog(@"[LazyAudio] tweak loaded (v5)");
-    NSLog(@"[LazyAudio] Levitator=%p Tips=%p Ball=%p Entry=%p NewEntry=%p HippyVC=%p",
-          objc_getClass("_TtC9lazyaudio25OnlineEarningNewLevitator"),
-          objc_getClass("_TtC9lazyaudio24OnlineEarningNewTipsView"),
-          objc_getClass("_TtC9lazyaudio19EarningTaskBallView"),
-          objc_getClass("_TtC9lazyaudio20EarningTaskEntryView"),
-          objc_getClass("_TtC9lazyaudio25OnlineEarningNewEntryView"),
-          objc_getClass("HippyViewController"));
+    gLATweakStart = CACurrentMediaTime();
+    NSLog(@"[LazyAudio] tweak loaded (v6 timing)");
 }
 
 // ========== 1. 底栏重排 ==========
@@ -156,7 +169,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 4. lazyaudio 开屏 Window ==========
+// ========== 4. 开屏 Window ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
@@ -164,7 +177,6 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 5. 广告开屏 Window ==========
 %hook _TtC13Advertisement14SplashAdWindow
 - (void)didMoveToWindow {
     %orig;
@@ -178,7 +190,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 6. 赚钱悬浮球 / 提示 / 任务入口 ==========
+// ========== 5. 赚钱悬浮球 / 提示 / 任务入口 ==========
 %hook _TtC9lazyaudio25OnlineEarningNewLevitator
 - (void)willMoveToWindow:(UIWindow *)newWindow {
     %orig;
@@ -222,19 +234,40 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 7. Hippy 弹窗：直接拦截 dialogViewDisplay，不渲染 ==========
+// ========== 6. Hippy 弹窗 ==========
 %hook HippyViewController
 - (void)dialogViewDisplay:(id)arg {
-    NSString *page = nil;
-    @try {
-        page = [self pageName];
-    } @catch (NSException *e) {}
-
-    NSLog(@"[LazyAudio] 拦截 Hippy 弹窗, pageName=%@", page ?: @"(nil)");
-    // 不调 %orig，弹窗不渲染
+    NSLog(@"[LA-T] Hippy dialogViewDisplay intercepted, pageName=%@", [self pageName]);
 }
-
 - (void)dialogViewDismiss:(id)arg {
     %orig;
+}
+%end
+
+// ========== 7. 播放链路时间戳（只打日志，不改行为） ==========
+%hook AudioPlayerBridge
++ (void)playWithBookId:(long long)a0 entityIndex:(long long)a1 autoSeek:(double)a2 listType:(long long)a3 autoPlay:(BOOL)a4 {
+    LATimeLog("AudioPlayerBridge.playWithBookId BEGIN");
+    %orig;
+    LATimeLog("AudioPlayerBridge.playWithBookId END");
+}
++ (void)loadPlayerButNotAutoPlay {
+    LATimeLog("AudioPlayerBridge.loadPlayerButNotAutoPlay BEGIN");
+    %orig;
+    LATimeLog("AudioPlayerBridge.loadPlayerButNotAutoPlay END");
+}
+%end
+
+%hook _TtC9lazyaudio16MiniPlayContainer
+- (void)didMoveToWindow {
+    %orig;
+    LATimeLog("MiniPlayContainer.didMoveToWindow");
+}
+%end
+
+%hook _TtC9lazyaudio15MiniBarPlayView
+- (void)updateStatus {
+    %orig;
+    LATimeLog("MiniBarPlayView.updateStatus");
 }
 %end
