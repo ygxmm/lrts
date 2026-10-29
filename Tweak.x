@@ -1,52 +1,9 @@
-#import <UIKit/UIKit.h>
-#import <objc/runtime.h>
-#import <QuartzCore/QuartzCore.h>
-#import <stdarg.h>
-#import <string.h>
-#import <objc/message.h>
-
-@interface _TtC9lazyaudio14TabBarItemView : UIView
-@end
-@interface _TtC9lazyaudio12MeSignButton : UIView
-@end
-@interface _TtC9lazyaudio18LaunchSplashWindow : UIWindow
-@end
-@interface _TtC13Advertisement14SplashAdWindow : UIWindow
-@end
-@interface _TtC9lazyaudio25OnlineEarningNewLevitator : UIView
-@end
-@interface _TtC9lazyaudio24OnlineEarningNewTipsView : UIView
-@end
-@interface _TtC9lazyaudio19EarningTaskBallView : UIView
-@end
-@interface _TtC9lazyaudio20EarningTaskEntryView : UIView
-@end
-@interface _TtC9lazyaudio25OnlineEarningNewEntryView : UIView
-@end
-@interface HippyViewController : UIViewController
-- (void)dialogViewDisplay:(id)arg;
-- (void)dialogViewDismiss:(id)arg;
-- (NSString *)pageName;
-@end
-@interface AudioPlayerBridge : NSObject
-+ (void)loadPlayerButNotAutoPlay;
-@end
-@interface AlertPool : NSObject
-+ (void)add:(id)a0;
-@end
-
-// 补充缺失的声明，告诉编译器它们继承自 UIView
-@interface _TtC9lazyaudio20FreeModeTimeoutAlert : UIView
-@end
-@interface _TtC9lazyaudio17ReaderFreeAdAlert : UIView
-@end
-@interface _TtC9lazyaudio18BaseAlertController : UIViewController
-@end
+#import "Tweak.h"
 
 static Class gTabItemClass = Nil;
 static char kLAIgnoredKey;
 
-// ========== 沙盒日志 ==========
+// ========== 沙盒日志工具 ==========
 static void LALog(NSString *fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -91,7 +48,7 @@ static void LADoPreload(const char *source) {
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    LALog(@"tweak loaded (v15 perfect-popup-block)");
+    LALog(@"tweak loaded (v16 modular)");
     dispatch_async(dispatch_get_main_queue(), ^{
         LADoPreload("Launch");
     });
