@@ -31,6 +31,13 @@
 @interface AudioPlayerBridge : NSObject
 + (void)loadPlayerButNotAutoPlay;
 @end
+@interface AlertPool : NSObject
++ (void)add:(id)a0;
+@end
+
+// 基类
+@interface _TtC9lazyaudio18BaseAlertController : UIViewController
+@end
 
 static Class gTabItemClass = Nil;
 static char kLAIgnoredKey;
@@ -75,15 +82,12 @@ static void LADoPreload(const char *source) {
         SEL sel = NSSelectorFromString(@"loadPlayerButNotAutoPlay");
         if ([bridgeClass respondsToSelector:sel]) {
             ((void (*)(id, SEL))objc_msgSend)(bridgeClass, sel);
-            LALog(@"[LA-T] 预加载触发 (%s)", source);
         }
     }
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    LALog(@"tweak loaded (v11 fix-tap)");
-    
-    // 启动时即刻向主线程发送预加载请求
+    LALog(@"tweak loaded (v14 perfect-popup-block)");
     dispatch_async(dispatch_get_main_queue(), ^{
         LADoPreload("Launch");
     });
@@ -101,11 +105,11 @@ __attribute__((constructor)) static void LAInit(void) {
         });
     }
 }
+
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
     NSString *cls = NSStringFromClass([self class]);
     if ([cls isEqualToString:@"lazyaudio.AppMainController"]) {
-        // 回到首页时再刷新一次数据
         dispatch_async(dispatch_get_main_queue(), ^{
             LADoPreload("viewDidAppear");
         });
@@ -113,7 +117,69 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 2. 底栏重排 ==========
+// ========== 2. 弹窗池源头拦截（只拦特定广告/限制类） ==========
+%hook AlertPool
++ (void)add:(id)a0 {
+    NSString *cls = NSStringFromClass([a0 class]);
+    if ([cls containsString:@"FreeMode"] || [cls containsString:@"AdFree"] || 
+        [cls containsString:@"Coin"] || [cls containsString:@"Reward"] || 
+        [cls containsString:@"PlayerAdFree"]) {
+        LALog(@"[LA-T] AlertPool 拦截弹窗: %@", cls);
+        return;
+    }
+    %orig;
+}
+%end
+
+// ========== 3. BaseAlertController 基类拦截 ==========
+%hook _TtC9lazyaudio18BaseAlertController
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    NSString *cls = NSStringFromClass([self class]);
+    if ([cls containsString:@"FreeMode"] || [cls containsString:@"AdFree"] || 
+        [cls containsString:@"Coin"] || [cls containsString:@"Reward"] || 
+        [cls containsString:@"PlayerAdFree"]) {
+        self.view.hidden = YES;
+        self.view.alpha = 0.0;
+        LALog(@"[LA-T] BaseAlert 拦截显示: %@", cls);
+    }
+}
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    NSString *cls = NSStringFromClass([self class]);
+    if ([cls containsString:@"FreeMode"] || [cls containsString:@"AdFree"] || 
+        [cls containsString:@"Coin"] || [cls containsString:@"Reward"] || 
+        [cls containsString:@"PlayerAdFree"]) {
+        self.view.hidden = YES;
+        self.view.alpha = 0.0;
+    }
+}
+%end
+
+// ========== 4. UIView 类型弹窗精准拦截 ==========
+%hook _TtC9lazyaudio20FreeModeTimeoutAlert
+- (void)didMoveToWindow {
+    %orig;
+    if (self.window) {
+        self.hidden = YES;
+        self.alpha = 0.0;
+        LALog(@"[LA-T] 拦截 FreeModeTimeoutAlert");
+    }
+}
+%end
+
+%hook _TtC9lazyaudio17ReaderFreeAdAlert
+- (void)didMoveToWindow {
+    %orig;
+    if (self.window) {
+        self.hidden = YES;
+        self.alpha = 0.0;
+        LALog(@"[LA-T] 拦截 ReaderFreeAdAlert");
+    }
+}
+%end
+
+// ========== 5. 底栏重排 ==========
 %hook UIView
 - (void)layoutSubviews {
     %orig;
@@ -137,7 +203,7 @@ __attribute__((constructor)) static void LAInit(void) {
         if (sub.tag == 3) {
             if (!sub.hidden) sub.hidden = YES;
             if (sub.alpha != 0.0) sub.alpha = 0.0;
-            if (sub.userInteractionEnabled) sub.userInteractionEnabled = NO; // 修复了这里的笔误
+            if (sub.userInteractionEnabled) sub.userInteractionEnabled = NO;
             if (!CGRectEqualToRect(sub.frame, CGRectZero)) {
                 sub.frame = CGRectZero;
             }
@@ -193,7 +259,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 3. TabBarItemView 兜底 ==========
+// ========== 6. TabBarItemView 兜底 ==========
 %hook _TtC9lazyaudio14TabBarItemView
 - (void)setTag:(NSInteger)tag {
     %orig;
@@ -213,7 +279,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 4. 签到按钮 ==========
+// ========== 7. 签到按钮 ==========
 %hook _TtC9lazyaudio12MeSignButton
 - (void)didMoveToWindow {
     %orig;
@@ -223,7 +289,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 5. 开屏 Window ==========
+// ========== 8. 开屏 Window ==========
 %hook _TtC9lazyaudio18LaunchSplashWindow
 - (void)setHidden:(BOOL)hidden {
     hidden = YES;
@@ -244,7 +310,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 6. 赚钱悬浮球 / 提示 / 任务入口 ==========
+// ========== 9. 赚钱悬浮球 / 提示 / 任务入口 ==========
 %hook _TtC9lazyaudio25OnlineEarningNewLevitator
 - (void)willMoveToWindow:(UIWindow *)newWindow {
     %orig;
@@ -288,7 +354,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 7. Hippy 弹窗 ==========
+// ========== 10. Hippy 弹窗 ==========
 %hook HippyViewController
 - (void)dialogViewDisplay:(id)arg {
     LALog(@"[LA-T] Hippy dialogViewDisplay intercepted, pageName=%@", [self pageName]);
