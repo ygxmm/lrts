@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <stdarg.h>
 #import <string.h>
+#import <objc/message.h>
 
 @interface _TtC9lazyaudio14TabBarItemView : UIView
 @end
@@ -27,20 +28,12 @@
 - (void)dialogViewDismiss:(id)arg;
 - (NSString *)pageName;
 @end
-
-@interface _TtC9lazyaudio17MiniPlayContainer : UIView
-@end
-@interface _TtC9lazyaudio15MiniBarPlayView : UIView
-- (void)updateStatus;
-@end
 @interface AudioPlayerBridge : NSObject
-+ (void)playWithBookId:(long long)a0 entityIndex:(long long)a1 autoSeek:(double)a2 listType:(long long)a3 autoPlay:(BOOL)a4;
 + (void)loadPlayerButNotAutoPlay;
 @end
 
 static Class gTabItemClass = Nil;
 static char kLAIgnoredKey;
-static double gLATweakStart = 0;
 
 // ========== 沙盒日志 ==========
 static void LALog(NSString *fmt, ...) {
@@ -68,11 +61,6 @@ static void LALog(NSString *fmt, ...) {
     }
 }
 
-static void LATimeLog(const char *tag) {
-    double now = CACurrentMediaTime();
-    LALog(@"[LA-T] %s  %.3f  (since start %.3f)", tag, now, now - gLATweakStart);
-}
-
 static BOOL LAIsTabItem(UIView *v) {
     if (!gTabItemClass) {
         gTabItemClass = objc_getClass("_TtC9lazyaudio14TabBarItemView");
@@ -81,10 +69,7 @@ static BOOL LAIsTabItem(UIView *v) {
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    gLATweakStart = CACurrentMediaTime();
-    LALog(@"tweak loaded (v7 sandbox-log)");
-    NSArray<NSString *> *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    LALog(@"log path: %@", [docs.firstObject stringByAppendingPathComponent:@"lazyaudio-tweak.log"]);
+    LALog(@"tweak loaded (v8 preload)");
 }
 
 // ========== 1. 底栏重排 ==========
@@ -272,72 +257,27 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 7. 播放链路时间戳 ==========
-%hook AudioPlayerBridge
-+ (void)play {
-    LATimeLog("AudioPlayerBridge.play BEGIN");
+// ========== 7. 播放器预加载（消除 MiniPlayBar 延迟） ==========
+%hook UIViewController
+- (void)viewDidAppear:(BOOL)animated {
     %orig;
-    LATimeLog("AudioPlayerBridge.play END");
-}
-+ (void)pause {
-    LATimeLog("AudioPlayerBridge.pause");
-    %orig;
-}
-+ (void)playWithBookId:(long long)a0 entityIndex:(long long)a1 autoSeek:(double)a2 listType:(long long)a3 autoPlay:(BOOL)a4 {
-    LATimeLog("AudioPlayerBridge.playWithBookId BEGIN");
-    %orig;
-    LATimeLog("AudioPlayerBridge.playWithBookId END");
-}
-+ (void)playWithEntityId:(long long)a0 subEntityId:(long long)a1 type:(long long)a2 autoSeek:(double)a3 listType:(long long)a4 autoPlay:(BOOL)a5 {
-    LATimeLog("AudioPlayerBridge.playWithEntityId BEGIN");
-    %orig;
-    LATimeLog("AudioPlayerBridge.playWithEntityId END");
-}
-+ (void)playWithProgrammeId:(long long)a0 entityId:(long long)a1 autoSeek:(double)a2 listType:(long long)a3 autoPlay:(BOOL)a4 {
-    LATimeLog("AudioPlayerBridge.playWithProgrammeId BEGIN");
-    %orig;
-    LATimeLog("AudioPlayerBridge.playWithProgrammeId END");
-}
-+ (void)loadPlayerButNotAutoPlay {
-    LATimeLog("AudioPlayerBridge.loadPlayerButNotAutoPlay BEGIN");
-    %orig;
-    LATimeLog("AudioPlayerBridge.loadPlayerButNotAutoPlay END");
-}
-+ (BOOL)isPlaying {
-    BOOL r = %orig;
-    LATimeLog("AudioPlayerBridge.isPlaying -> %d", r);
-    return r;
-}
-%end
 
-%hook _TtC9lazyaudio17MiniPlayContainer
-- (void)didMoveToWindow {
-    %orig;
-    LATimeLog("MiniPlayContainer.didMoveToWindow");
-}
-%end
-
-@interface _TtC9lazyaudio10MiniPlayBar : UIView
-@end
-
-%hook _TtC9lazyaudio10MiniPlayBar
-- (void)didMoveToWindow {
-    %orig;
-    LATimeLog("MiniPlayBar.didMoveToWindow");
-}
-%end
-
-%hook _TtC9lazyaudio15MiniBarPlayView
-- (void)updateStatus {
-    %orig;
-    id st = nil;
-    @try {
-        st = [self valueForKey:@"status"];
-    } @catch (NSException *e) {}
-    LATimeLog("MiniBarPlayView.updateStatus status=%@", st);
-}
-- (void)didMoveToWindow {
-    %orig;
-    LATimeLog("MiniBarPlayView.didMoveToWindow window=%p", self.window);
+    // 当主界面出现时，延迟 1.5 秒静默预加载播放数据
+    if ([NSStringFromClass([self class]) isEqualToString:@"lazyaudio.AppMainController"]) {
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                LALog(@"[LA-T] 开始触发后台预加载播放器数据");
+                Class bridgeClass = objc_getClass("AudioPlayerBridge");
+                if (bridgeClass) {
+                    SEL sel = NSSelectorFromString(@"loadPlayerButNotAutoPlay");
+                    if ([bridgeClass respondsToSelector:sel]) {
+                        ((void (*)(id, SEL))objc_msgSend)(bridgeClass, sel);
+                        LALog(@"[LA-T] loadPlayerButNotAutoPlay 已触发");
+                    }
+                }
+            });
+        });
+    }
 }
 %end
