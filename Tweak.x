@@ -3,32 +3,6 @@
 static Class gTabItemClass = Nil;
 static char kLAIgnoredKey;
 
-// ========== 沙盒日志工具 ==========
-static void LALog(NSString *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
-    va_end(args);
-
-    NSArray<NSString *> *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *dir = docs.firstObject;
-    if (!dir.length) return;
-
-    NSString *path = [dir stringByAppendingPathComponent:@"lazyaudio-tweak.log"];
-    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], msg];
-
-    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
-    if (!fh) {
-        [line writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    } else {
-        @try {
-            [fh seekToEndOfFile];
-            [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
-            [fh closeFile];
-        } @catch (NSException *e) {}
-    }
-}
-
 static BOOL LAIsTabItem(UIView *v) {
     if (!gTabItemClass) {
         gTabItemClass = objc_getClass("_TtC9lazyaudio14TabBarItemView");
@@ -37,7 +11,7 @@ static BOOL LAIsTabItem(UIView *v) {
 }
 
 // ========== 预加载方法封装 ==========
-static void LADoPreload(const char *source) {
+static void LADoPreload(void) {
     Class bridgeClass = objc_getClass("AudioPlayerBridge");
     if (bridgeClass) {
         SEL sel = NSSelectorFromString(@"loadPlayerButNotAutoPlay");
@@ -48,9 +22,8 @@ static void LADoPreload(const char *source) {
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    LALog(@"tweak loaded (v16 modular)");
     dispatch_async(dispatch_get_main_queue(), ^{
-        LADoPreload("Launch");
+        LADoPreload();
     });
 }
 
@@ -62,7 +35,7 @@ __attribute__((constructor)) static void LAInit(void) {
     if ([cls isEqualToString:@"lazyaudio.AppPrepareController"] || 
         [cls isEqualToString:@"lazyaudio.AppMainController"]) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            LADoPreload("viewDidLoad");
+            LADoPreload();
         });
     }
 }
@@ -72,7 +45,7 @@ __attribute__((constructor)) static void LAInit(void) {
     NSString *cls = NSStringFromClass([self class]);
     if ([cls isEqualToString:@"lazyaudio.AppMainController"]) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            LADoPreload("viewDidAppear");
+            LADoPreload();
         });
     }
 }
@@ -85,7 +58,6 @@ __attribute__((constructor)) static void LAInit(void) {
     if ([cls containsString:@"FreeMode"] || [cls containsString:@"AdFree"] || 
         [cls containsString:@"Coin"] || [cls containsString:@"Reward"] || 
         [cls containsString:@"PlayerAdFree"]) {
-        LALog(@"[LA-T] AlertPool 拦截弹窗: %@", cls);
         return;
     }
     %orig;
@@ -102,7 +74,6 @@ __attribute__((constructor)) static void LAInit(void) {
         [cls containsString:@"PlayerAdFree"]) {
         self.view.hidden = YES;
         self.view.alpha = 0.0;
-        LALog(@"[LA-T] BaseAlert 拦截显示: %@", cls);
     }
 }
 - (void)viewDidAppear:(BOOL)animated {
@@ -124,7 +95,6 @@ __attribute__((constructor)) static void LAInit(void) {
     if (self.window) {
         self.hidden = YES;
         self.alpha = 0.0;
-        LALog(@"[LA-T] 拦截 FreeModeTimeoutAlert");
     }
 }
 %end
@@ -135,7 +105,6 @@ __attribute__((constructor)) static void LAInit(void) {
     if (self.window) {
         self.hidden = YES;
         self.alpha = 0.0;
-        LALog(@"[LA-T] 拦截 ReaderFreeAdAlert");
     }
 }
 %end
@@ -318,7 +287,7 @@ __attribute__((constructor)) static void LAInit(void) {
 // ========== 10. Hippy 弹窗 ==========
 %hook HippyViewController
 - (void)dialogViewDisplay:(id)arg {
-    LALog(@"[LA-T] Hippy dialogViewDisplay intercepted, pageName=%@", [self pageName]);
+    // 拦截，静默处理
 }
 - (void)dialogViewDismiss:(id)arg {
     %orig;

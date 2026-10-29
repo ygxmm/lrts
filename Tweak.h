@@ -1,7 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
-#import <stdarg.h>
 #import <string.h>
 #import <objc/message.h>
 
