@@ -81,7 +81,7 @@ static void LADoPreload(const char *source) {
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    LALog(@"tweak loaded (v10 max-preload)");
+    LALog(@"tweak loaded (v11 fix-tap)");
     
     // 启动时即刻向主线程发送预加载请求
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -137,7 +137,7 @@ __attribute__((constructor)) static void LAInit(void) {
         if (sub.tag == 3) {
             if (!sub.hidden) sub.hidden = YES;
             if (sub.alpha != 0.0) sub.alpha = 0.0;
-            if (self.userInteractionEnabled) self.userInteractionEnabled = NO;
+            if (sub.userInteractionEnabled) sub.userInteractionEnabled = NO; // 修复了这里的笔误
             if (!CGRectEqualToRect(sub.frame, CGRectZero)) {
                 sub.frame = CGRectZero;
             }
