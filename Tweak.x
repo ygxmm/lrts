@@ -9,15 +9,20 @@
 @end
 @interface _TtC13Advertisement14SplashAdWindow : UIWindow
 @end
-@interface _TtC9lazyaudio26OnlineEarningNewLevitator : UIView
+@interface _TtC9lazyaudio25OnlineEarningNewLevitator : UIView
 @end
-@interface _TtC9lazyaudio25OnlineEarningNewTipsView : UIView
+@interface _TtC9lazyaudio24OnlineEarningNewTipsView : UIView
 @end
 @interface _TtC9lazyaudio19EarningTaskBallView : UIView
 @end
 @interface _TtC9lazyaudio20EarningTaskEntryView : UIView
 @end
 @interface _TtC9lazyaudio25OnlineEarningNewEntryView : UIView
+@end
+@interface HippyViewController : UIViewController
+- (void)dialogViewDisplay:(id)arg;
+- (void)dialogViewDismiss:(id)arg;
+- (NSString *)pageName;
 @end
 
 static Class gTabItemClass = Nil;
@@ -31,13 +36,14 @@ static BOOL LAIsTabItem(UIView *v) {
 }
 
 __attribute__((constructor)) static void LAInit(void) {
-    NSLog(@"[LazyAudio] tweak loaded (v3 ad+earning)");
-    NSLog(@"[LazyAudio] Levitator=%p Tips=%p Ball=%p Entry=%p NewEntry=%p",
-          objc_getClass("_TtC9lazyaudio26OnlineEarningNewLevitator"),
-          objc_getClass("_TtC9lazyaudio25OnlineEarningNewTipsView"),
+    NSLog(@"[LazyAudio] tweak loaded (v5)");
+    NSLog(@"[LazyAudio] Levitator=%p Tips=%p Ball=%p Entry=%p NewEntry=%p HippyVC=%p",
+          objc_getClass("_TtC9lazyaudio25OnlineEarningNewLevitator"),
+          objc_getClass("_TtC9lazyaudio24OnlineEarningNewTipsView"),
           objc_getClass("_TtC9lazyaudio19EarningTaskBallView"),
           objc_getClass("_TtC9lazyaudio20EarningTaskEntryView"),
-          objc_getClass("_TtC9lazyaudio25OnlineEarningNewEntryView"));
+          objc_getClass("_TtC9lazyaudio25OnlineEarningNewEntryView"),
+          objc_getClass("HippyViewController"));
 }
 
 // ========== 1. 底栏重排 ==========
@@ -158,7 +164,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-// ========== 5. 广告开屏 Window：强制 hidden ==========
+// ========== 5. 广告开屏 Window ==========
 %hook _TtC13Advertisement14SplashAdWindow
 - (void)didMoveToWindow {
     %orig;
@@ -173,7 +179,7 @@ __attribute__((constructor)) static void LAInit(void) {
 %end
 
 // ========== 6. 赚钱悬浮球 / 提示 / 任务入口 ==========
-%hook _TtC9lazyaudio26OnlineEarningNewLevitator
+%hook _TtC9lazyaudio25OnlineEarningNewLevitator
 - (void)willMoveToWindow:(UIWindow *)newWindow {
     %orig;
     self.hidden = YES;
@@ -182,7 +188,7 @@ __attribute__((constructor)) static void LAInit(void) {
 }
 %end
 
-%hook _TtC9lazyaudio25OnlineEarningNewTipsView
+%hook _TtC9lazyaudio24OnlineEarningNewTipsView
 - (void)didMoveToWindow {
     %orig;
     self.hidden = YES;
@@ -213,5 +219,22 @@ __attribute__((constructor)) static void LAInit(void) {
     %orig;
     self.hidden = YES;
     self.alpha = 0.0;
+}
+%end
+
+// ========== 7. Hippy 弹窗：直接拦截 dialogViewDisplay，不渲染 ==========
+%hook HippyViewController
+- (void)dialogViewDisplay:(id)arg {
+    NSString *page = nil;
+    @try {
+        page = [self pageName];
+    } @catch (NSException *e) {}
+
+    NSLog(@"[LazyAudio] 拦截 Hippy 弹窗, pageName=%@", page ?: @"(nil)");
+    // 不调 %orig，弹窗不渲染
+}
+
+- (void)dialogViewDismiss:(id)arg {
+    %orig;
 }
 %end
